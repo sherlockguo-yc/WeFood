@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { clusterPoints, type MapPoint } from '../../../shared/geo.js';
+import { clusterPoints, type MapPoint, type MapPoi } from '../../../shared/geo.js';
 import { api, message } from '../api.js';
 import { Button, Notice, useLoad } from './Ui.js';
 
 export type MapConfig = { jsKey: string; searchEnabled: boolean; provider: 'tencent' };
 type LatLng = { lat?: number; lng?: number; getLat?: () => number; getLng?: () => number };
 type Geometry = { id: string; position: LatLng; styleId?: string };
-type MapEvent = { latLng?: LatLng; geometry?: { id?: string } };
-type MapInstance = { on: (event: string, fn: (e: MapEvent) => void) => void; setCenter: (p: LatLng) => void; setZoom: (z: number) => void; getZoom: () => number; fitBounds: (b: unknown, options: object) => void; destroy: () => void };
+type MapEvent = { latLng?: LatLng; geometry?: { id?: string }; poi?: { name?: string; latLng?: LatLng } | null };
+type MapInstance = { on: (event: string, fn: (e: MapEvent) => void) => void; setCenter: (p: LatLng) => void; setZoom: (z: number) => void; getZoom: () => number; fitBounds: (b: unknown, options: object) => void; destroy: () => void; getCenter: () => LatLng };
 type MarkerInstance = { on: (event: string, fn: (e: MapEvent) => void) => void; setGeometries: (g: Geometry[]) => void; setStyles: (s: Record<string, unknown>) => void; setMap: (m: MapInstance | null) => void; setStopPropagation: (stop: boolean) => void };
 type SDK = {
   Map: new (el: HTMLElement, options: object) => MapInstance;
@@ -39,16 +39,16 @@ function coordinates(p?: LatLng) {
   const lat = p?.getLat ? p.getLat() : p?.lat, lng = p?.getLng ? p.getLng() : p?.lng;
   return typeof lat === 'number' && typeof lng === 'number' && Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
 }
-function pin(count: number) {
+function pin(count: number, color: string) {
   const label = count > 1 ? String(count) : '●';
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="44"><path d="M20 43 L10 31 A18 18 0 1 1 30 31 Z" fill="#A8461F" stroke="#fff" stroke-width="2"/><text x="20" y="24" text-anchor="middle" font-family="sans-serif" font-size="16" fill="#fff">${label}</text></svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="44"><path d="M20 43 L10 31 A18 18 0 1 1 30 31 Z" fill="${color}" stroke="#fff" stroke-width="2"/><text x="20" y="24" text-anchor="middle" font-family="sans-serif" font-size="16" fill="#fff">${label}</text></svg>`;
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 }
 
-export function FoodMap({ points = [], center, onSelect, onPick, onNear }: { points?: MapPoint[]; center?: { lat: number; lng: number } | null; onSelect?: (id: string) => void; onPick?: (p: { lat: number; lng: number }) => void; onNear?: (p: { lat: number; lng: number }) => void }) {
+export function FoodMap({ points = [], center, onSelect, onPick, onNear, onPoi, onCenter, variant = 'private' }: { points?: MapPoint[]; center?: { lat: number; lng: number } | null; onSelect?: (id: string) => void; onPick?: (p: { lat: number; lng: number }) => void; onNear?: (p: { lat: number; lng: number }) => void; onPoi?: (p: MapPoi) => void; onCenter?: (p: { lat: number; lng: number }) => void; variant?: 'private' | 'candidate' }) {
   const config = useLoad(() => api<MapConfig>('/maps/config'), []);
   const element = useRef<HTMLDivElement>(null);
-  const refs = useRef({ points, onSelect, onPick, onNear }); refs.current = { points, onSelect, onPick, onNear };
+  const refs = useRef({ points, onSelect, onPick, onNear, onPoi, onCenter }); refs.current = { points, onSelect, onPick, onNear, onPoi, onCenter };
   const mapRef = useRef<MapInstance | null>(null);
   const drawRef = useRef<() => void>(() => undefined);
   const fitRef = useRef<() => void>(() => undefined);
@@ -71,7 +71,7 @@ export function FoodMap({ points = [], center, onSelect, onPick, onNear }: { poi
         if (!map || !markers || !live) return;
         clusters = clusterPoints(refs.current.points, map.getZoom());
         const styles: Record<string, unknown> = {};
-        for (const c of clusters) styles[String(c.members.length)] = new T.MarkerStyle({ width: 40, height: 44, anchor: { x: 20, y: 44 }, src: pin(c.members.length) });
+        for (const c of clusters) styles[String(c.members.length)] = new T.MarkerStyle({ width: 40, height: 44, anchor: { x: 20, y: 44 }, src: pin(c.members.length, variant === 'candidate' ? '#2F6E83' : '#A8461F') });
         markers.setStyles(styles);
         markers.setGeometries(clusters.map(c => ({ id: c.id, styleId: String(c.members.length), position: new T.LatLng(c.lat, c.lng) })));
       };
@@ -83,16 +83,24 @@ export function FoodMap({ points = [], center, onSelect, onPick, onNear }: { poi
         else { const first = new T.LatLng(pts[0].lat, pts[0].lng); const bounds = new T.LatLngBounds(first, first); pts.forEach(x => bounds.extend(new T.LatLng(x.lat, x.lng))); map.fitBounds(bounds, { padding: 48, maxZoom: 16 }); }
       };
       map.on('zoom', draw);
-      map.on('click', e => { const pos = coordinates(e.latLng); if (pos) refs.current.onPick?.(pos); });
+      map.on('idle', () => { const pos = coordinates(map?.getCenter()); if (pos) refs.current.onCenter?.(pos); });
+      map.on('click', e => {
+        if (e.poi?.name?.trim()) {
+          const pos = coordinates(e.poi.latLng);
+          if (pos && refs.current.onPoi) refs.current.onPoi({ name: e.poi.name.trim(), ...pos });
+          return;
+        }
+        const pos = coordinates(e.latLng); if (pos) refs.current.onPick?.(pos);
+      });
       markers.on('click', e => {
         const c = clusters.find(c => c.id === e.geometry?.id); if (!c || !map) return;
         if (c.members.length === 1) refs.current.onSelect?.(c.members[0].id);
         else { map.setCenter(new T.LatLng(c.lat, c.lng)); map.setZoom(Math.min(map.getZoom() + 3, 20)); }
       });
-      draw(); fitRef.current(); setReady(true);
+      draw(); fitRef.current(); const initialCenter = coordinates(map.getCenter()); if (initialCenter) refs.current.onCenter?.(initialCenter); setReady(true);
     }).catch(e => { if (live) setError(message(e)); });
     return () => { live = false; markers?.setMap(null); map?.destroy(); mapRef.current = null; drawRef.current = () => undefined; fitRef.current = () => undefined; };
-  }, [key, tick]);
+  }, [key, tick, variant]);
 
   useEffect(() => { drawRef.current(); fitRef.current(); }, [points]);
   useEffect(() => { if (center && mapRef.current && window.TMap) { mapRef.current.setCenter(new window.TMap.LatLng(center.lat, center.lng)); mapRef.current.setZoom(15); } }, [center]);

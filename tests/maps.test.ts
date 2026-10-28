@@ -35,6 +35,23 @@ describe('位置与堂食', () => {
     expect((await agent.post('/api/meals').set(headers).send(body)).status).toBe(201);
     expect((await agent.put(`/api/restaurants/${r.id}`).set(headers).send({ location: { ...point, lat: 100 }, version: 2 })).status).toBe(400);
   });
+  it('同账号同腾讯POI重复加入复用，跨账号不共享，同名不同分店不合并', async () => {
+    const f = fixture(); const { agent, headers } = await login(f);
+    const body = { name: '同名店', address: '天河路 1 号', location: { ...point, source: 'tencent', providerId: 'same-poi' } };
+    const first = await agent.post('/api/restaurants').set(headers).send(body);
+    const second = await agent.post('/api/restaurants').set(headers).send({ ...body, note: '不可覆盖原记录' });
+    expect(second.body.data.id).toBe(first.body.data.id);
+    expect(second.body.data.note).toBe('');
+    const branch = await agent.post('/api/restaurants').set(headers).send({ ...body, location: { ...body.location, providerId: 'other-poi' } });
+    expect(branch.body.data.id).not.toBe(first.body.data.id);
+    expect((await agent.put(`/api/restaurants/${branch.body.data.id}`).set(headers).send({ location: body.location, version: 1 })).status).toBe(409);
+    expect((await agent.get(`/api/restaurants/${branch.body.data.id}`)).body.data.location.providerId).toBe('other-poi');
+    const invite = (await agent.post('/api/auth/invites').set(headers)).body.data.token;
+    const other = request.agent(f.app); const h = await other.get('/api/auth/status');
+    const auth = await other.post('/api/auth/register').set({ Origin: 'http://localhost', 'X-CSRF-Token': h.body.data.csrf }).send({ username: 'friend', password: 'maps-password-123', invite });
+    const privateCopy = await other.post('/api/restaurants').set({ Origin: 'http://localhost', 'X-CSRF-Token': auth.body.data.csrf }).send(body);
+    expect(privateCopy.body.data.id).not.toBe(first.body.data.id);
+  });
   it('位置严格标记坐标系，密集点聚合，高缩放展开', () => {
     expect(locationSchema.safeParse({ ...point, crs: 'WGS-84' }).success).toBe(false);
     expect(locationSchema.safeParse({ ...point, lat: NaN }).success).toBe(false);
@@ -60,6 +77,15 @@ describe('腾讯适配器（模拟响应，不是真实上游验证）', () => {
     expect(url.searchParams.get('boundary')).toBe('region(广州,0)');
     expect(url.searchParams.get('sig')).toHaveLength(32);
     await expect(maps.search({ keyword: '粥', region: '广州' }, 'owner')).rejects.toMatchObject({ code: 'MAPS_QUOTA' });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+  it('底图名称查询使用明确GCJ坐标附近，不混用区域或GPS坐标', async () => {
+    const f = fixture(); const fetchImpl = vi.fn(async (_url: string | URL | Request) => new Response(JSON.stringify({ status: 0, count: 0, data: [] })));
+    const maps = createMaps({ db: f.db, key: 'test-key', fetchImpl });
+    await maps.search({ keyword: '底图好店', center: { lat: 23.13, lng: 113.32, crs: 'GCJ-02' } }, 'owner');
+    expect(new URL(String(fetchImpl.mock.calls[0][0])).searchParams.get('boundary')).toBe('nearby(23.13,113.32,1000,0)');
+    await expect(maps.search({ keyword: '店', region: '广州', center: { lat: 23.13, lng: 113.32, crs: 'GCJ-02' } }, 'owner')).rejects.toThrow();
+    await expect(maps.search({ keyword: '店', center: { lat: 23.13, lng: 113.32, crs: 'WGS-84' } }, 'owner')).rejects.toThrow();
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
   it('逆编码保留点击坐标，GPS 转换使用 type=1，异常不泄露秘密', async () => {

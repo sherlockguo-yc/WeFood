@@ -2,14 +2,20 @@ import { Router } from 'express';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { FoodDB } from './database.js';
-import { coordinatesSchema, type FoodLocation } from '../shared/geo.js';
+import { coordinatesSchema, type FoodLocation, type Place } from '../shared/geo.js';
 import { fail, HttpError } from './errors.js';
 
 export type MapsConfig = { jsKey?: string; key?: string; sk?: string; dailyLimit?: number; userDailyLimit?: number };
 type Options = MapsConfig & { db: FoodDB; fetchImpl?: typeof fetch; now?: () => Date; timeoutMs?: number };
-export type Place = { name: string; address: string; category: string; location: FoodLocation };
+export type { Place } from '../shared/geo.js';
 const rowSchema = z.object({ id: z.string().min(1).max(200), title: z.string().min(1).max(120), address: z.string().max(300).default(''), category: z.string().max(200).default(''), location: coordinatesSchema });
-const searchSchema = z.object({ keyword: z.string().trim().min(1).max(96), region: z.string().trim().min(1).max(80).regex(/^[^(),\u0000-\u001f]+$/), page: z.number().int().min(1).max(20).default(1) }).strict();
+const searchSchema = z.object({
+  keyword: z.string().trim().min(1).max(96),
+  region: z.string().trim().min(1).max(80).regex(/^[^(),\u0000-\u001f]+$/).optional(),
+  center: coordinatesSchema.extend({ crs: z.literal('GCJ-02') }).strict().optional(),
+  radiusMeters: z.number().int().min(10).max(1000).optional(),
+  page: z.number().int().min(1).max(20).default(1)
+}).strict().refine(p => (p.region ? !p.center && p.radiusMeters === undefined : !!p.center), '请选择城市/区域或地图中心附近，不能同时指定');
 const normalize = (raw: unknown): Place => {
   const r = rowSchema.safeParse(raw);
   if (!r.success) fail(502, 'MAPS_RESPONSE', '地图返回的地点资料不完整，请换个关键词');
@@ -62,7 +68,8 @@ export function createMaps(options: Options) {
     async search(input: unknown, owner: string) {
       const p = searchSchema.parse(input);
       if (Buffer.byteLength(p.keyword) > 96) fail(400, 'VALIDATION', '搜索关键词过长');
-      const d = await upstream('/ws/place/v1/search', { keyword: p.keyword, boundary: `region(${p.region},0)`, page_size: '10', page_index: String(p.page) }, owner);
+      const boundary = p.region ? `region(${p.region},0)` : `nearby(${p.center!.lat},${p.center!.lng},${p.radiusMeters ?? 1000},0)`;
+      const d = await upstream('/ws/place/v1/search', { keyword: p.keyword, boundary, page_size: '10', page_index: String(p.page) }, owner);
       if (!Array.isArray(d.data) || d.data.length > 10 || !Number.isSafeInteger(d.count) || Number(d.count) < 0) fail(502, 'MAPS_RESPONSE', '地图地点列表格式异常');
       return { places: d.data.map(normalize), hasMore: p.page * 10 < Math.min(Number(d.count), 200) };
     },

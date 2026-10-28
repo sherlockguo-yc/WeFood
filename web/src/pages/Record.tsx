@@ -26,6 +26,7 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
   const [restored] = useState(() => readDraft(user.id));
   const [d, setD] = useState<Draft>(() => restored ?? blank(preset));
   const [dirty, setDirty] = useState(!!restored);
+  const [presetPending, setPresetPending] = useState(!!restored && !!preset && restored.restaurantId !== preset);
   const [search, setSearch] = useState('');
   const [dishText, setDishText] = useState('');
   const [personText, setPersonText] = useState('');
@@ -128,7 +129,11 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
     <>
       <PageHead title="记一顿" sub="堂食请填店铺地址，其他信息可后补" />
       <fieldset className="record-fields" disabled={busy}>
-      {restored && dirty && <Notice tone="warn" action={<Button variant="ghost" onClick={discard}>丢弃草稿</Button>}>已恢复这台设备上未保存的草稿。草稿只在本机，保存后其他设备才能看到。</Notice>}
+      {presetPending && <Notice tone="warn">当前恢复了另一家店的草稿，没有覆盖原输入。
+        <div className="row"><Button variant="soft" onClick={() => { update({ restaurantId: preset, newRestaurant: false, restaurantName: '', restaurantAddress: '', restaurantLocation: null, addressEdited: false, dishes: [], newDishes: [], ratings: {} }); setPresetPending(false); }}>改用地图选中的店</Button>
+          <Button variant="ghost" onClick={() => setPresetPending(false)}>继续原草稿</Button></div>
+      </Notice>}
+      {restored && dirty && <Notice tone="warn" action={<Button variant="ghost" onClick={() => { discard(); setPresetPending(false); }}>丢弃草稿</Button>}>已恢复这台设备上未保存的草稿。草稿只在本机，保存后其他设备才能看到。</Notice>}
 
       <section className="card" aria-labelledby="where">
         <h2 className="card-title" id="where">在哪吃</h2>
@@ -155,8 +160,17 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
           </>
         )}
         <PlacePicker key={d.restaurantId || 'new'} address={address} location={foodLocation} required={d.mode === 'dine-in'} keyword={d.newRestaurant ? d.restaurantName : selected?.name || search}
-          onChange={p => update({ restaurantAddress: p.address, restaurantLocation: p.location, addressEdited: true,
-            ...(!d.restaurantId && p.name ? { newRestaurant: true, restaurantName: p.name } : {}) })} />
+          onChange={p => {
+            const existing = p.location?.source === 'tencent' ? restaurants.data?.find(r => r.location?.source === 'tencent' && r.location.providerId === p.location!.providerId) : undefined;
+            if (existing && existing.id !== d.restaurantId) {
+              if (existing.archived) { setError('这家店已归档，请先到记忆库恢复，不要覆盖当前店铺'); return; }
+              if (d.restaurantId && (d.dishes.length || d.newDishes.length || Object.keys(d.ratings).length) && !confirm('改用地图选中的另一家店？当前已选菜品和评价会清空，备注和照片保留。')) return;
+              update({ restaurantId: existing.id, newRestaurant: false, restaurantName: '', restaurantAddress: existing.address, restaurantLocation: existing.location ?? null, addressEdited: false, dishes: [], newDishes: [], ratings: {} });
+              return;
+            }
+            update({ restaurantAddress: p.address, restaurantLocation: p.location, addressEdited: true,
+              ...(!d.restaurantId && p.name ? { newRestaurant: true, restaurantName: p.name } : {}) });
+          }} />
         {d.restaurantId && d.addressEdited && <p className="muted small">保存这一顿时同时更新店铺位置，已有历史记录保留。</p>}
         {d.newRestaurant && <TagInput label="店铺标签" value={d.restaurantTags} onChange={restaurantTags => update({ restaurantTags })} groups={groups.data ?? []} />}
       </section>

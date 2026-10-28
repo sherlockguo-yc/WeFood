@@ -11,7 +11,7 @@ const nav = (p: Page, name: string) => p.getByRole('navigation', { name: '主导
 
 async function mockSDK(page: Page) {
   await page.addInitScript(() => {
-    type Callback = (e: { latLng?: { lat: number; lng: number }; geometry?: { id: string } }) => void;
+    type Callback = (e: { latLng?: { lat: number; lng: number }; geometry?: { id: string }; poi?: { name: string; latLng: { lat: number; lng: number } } }) => void;
     class LatLng { constructor(public lat: number, public lng: number) {} }
     class MapMock {
       handlers: Record<string, Callback> = {};
@@ -19,11 +19,14 @@ async function mockSDK(page: Page) {
       constructor(public element: HTMLElement) {
         const button = document.createElement('button'); button.type = 'button'; button.textContent = '测试地图落点';
         button.onclick = () => this.handlers.click?.({ latLng: { lat: 23.132, lng: 113.322 } }); element.append(button);
+        const poi = document.createElement('button'); poi.type = 'button'; poi.textContent = '测试底图店名';
+        poi.onclick = () => this.handlers.click?.({ latLng: { lat: 23.15, lng: 113.35 }, poi: { name: '底图好店', latLng: { lat: 23.13, lng: 113.32 } } }); element.append(poi);
       }
       on(e: string, fn: Callback) { this.handlers[e] = fn; }
       setCenter() {}
       setZoom(z: number) { this.zoom = z; this.handlers.zoom?.({}); }
       getZoom() { return this.zoom; }
+      getCenter() { return new LatLng(23.13, 113.32); }
       fitBounds() {}
       destroy() { this.element.replaceChildren(); }
     }
@@ -112,4 +115,90 @@ test('模拟腾讯契约：POI回填、保存位置、地图标记联动；不�
   await expect(page.getByLabel('店铺地址')).toHaveValue('我手填的新地址');
   expect(errors).toEqual([]);
   await page.screenshot({ path: 'test-results/maps-mobile.png', fullPage: true });
+});
+
+test('底图店名可选，首页可搜名称，重复加入复用，记录保留旧草稿', async ({ page }) => {
+  const errors: string[] = []; page.on('pageerror', e => errors.push(e.message));
+  await mockSDK(page);
+  let queries = 0, reverses = 0;
+  const place = { name: '底图好店', address: '体育西路 200 号', category: '餐饮', location: { lat: 23.13, lng: 113.32, crs: 'GCJ-02', source: 'tencent', providerId: 'base-poi' } };
+  await page.route('**/api/maps/search', async route => {
+    const body = route.request().postDataJSON(); queries++;
+    if (body.center) { expect(body.keyword).toBe('底图好店'); expect(body.center).toEqual({ lat: 23.13, lng: 113.32, crs: 'GCJ-02' }); }
+    else { expect(body.keyword).toBe('底图'); expect(body.region).toBe('广州'); }
+    await route.fulfill({ json: { data: { places: [place], hasMore: false } } });
+  });
+  await page.route('**/api/maps/reverse', async route => { reverses++; await route.fulfill({ json: { data: { address: '空白点地址' } } }); });
+  await login(page);
+  await nav(page, '记录').click();
+  await page.getByLabel('店铺', { exact: true }).fill('草稿店');
+  await page.getByRole('button', { name: '新建「草稿店」' }).click();
+  await page.getByLabel('备注', { exact: true }).fill('保留旧草稿备注');
+  await nav(page, '吃什么').click();
+  await page.getByRole('group', { name: '查看方式' }).getByRole('button', { name: '地图', exact: true }).click();
+  await page.getByRole('button', { name: '测试底图店名' }).click();
+  const card = page.getByRole('region', { name: '地图店铺卡片' });
+  await expect(card.getByRole('heading', { name: '底图好店' })).toBeVisible();
+  expect(reverses).toBe(0);
+  await card.getByRole('button', { name: '加入记忆库' }).click();
+  await expect(card.getByRole('link', { name: '查看已有食记' })).toBeVisible();
+  await page.getByRole('button', { name: '回到自己的店铺' }).click();
+  await page.getByLabel('城市或区域').fill('广州');
+  await page.getByLabel('地图搜索店名').fill('底图');
+  expect(queries).toBe(1);
+  await page.getByRole('button', { name: '搜索店铺' }).click();
+  await page.getByRole('button', { name: '选这家' }).click();
+  await expect(card.getByText('已在你的记忆库里，不会重复添加')).toBeVisible();
+  await card.getByRole('button', { name: '用这家店记录' }).click();
+  await expect(page.getByText('当前恢复了另一家店的草稿，没有覆盖原输入。')).toBeVisible();
+  await expect(page.getByLabel('备注', { exact: true })).toHaveValue('保留旧草稿备注');
+  await page.getByRole('button', { name: '改用地图选中的店' }).click();
+  await expect(page.getByLabel('店铺地址（堂食必填）')).toHaveValue('体育西路 200 号');
+  await expect(page.getByLabel('备注', { exact: true })).toHaveValue('保留旧草稿备注');
+  await page.getByRole('button', { name: '保存这一顿' }).click();
+  await expect(page.getByRole('heading', { name: '底图好店', level: 1 })).toBeVisible();
+  expect(errors).toEqual([]);
+  await nav(page, '吃什么').click();
+  await page.getByRole('group', { name: '查看方式' }).getByRole('button', { name: '地图', exact: true }).click();
+  await page.getByRole('button', { name: '测试底图店名' }).click();
+  await expect(card.getByRole('heading', { name: '底图好店' })).toBeVisible();
+  await page.screenshot({ path: 'test-results/poi-selected-mobile.png', fullPage: true });
+});
+
+test('私人库为空也能地图搜索；底图附近多分店需确认，不自动编造ID', async ({ page }) => {
+  await mockSDK(page);
+  await page.route('**/api/discover*', route => route.fulfill({ json: { data: { results: [], libraryEmpty: true } } }));
+  await page.route('**/api/maps/search', route => route.fulfill({ json: { data: { places: [
+    { name: '底图好店', address: '路1', category: '餐饮', location: { lat: 23.13, lng: 113.32, crs: 'GCJ-02', source: 'tencent', providerId: 'ambiguity1' } },
+    { name: '底图好店', address: '路2', category: '餐饮', location: { lat: 23.1301, lng: 113.3201, crs: 'GCJ-02', source: 'tencent', providerId: 'ambiguity2' } }
+  ], hasMore: false } } }));
+  await login(page);
+  await page.getByRole('group', { name: '查看方式' }).getByRole('button', { name: '地图', exact: true }).click();
+  await expect(page.getByRole('button', { name: '搜索店铺' })).toBeVisible();
+  await page.getByRole('button', { name: '测试底图店名' }).click();
+  await expect(page.getByText('「底图好店」可能有多家分店，请从候选中选正确的一家')).toBeVisible();
+  await expect(page.getByRole('region', { name: '地图店铺卡片' })).toHaveCount(0);
+  const rows = page.getByRole('list', { name: '地图候选店铺' }).getByRole('listitem');
+  await rows.nth(1).getByRole('button', { name: '选这家' }).click();
+  await expect(page.getByRole('region', { name: '地图店铺卡片' }).getByText('路2', { exact: true })).toBeVisible();
+});
+
+test('搜索第一页有更多时不自动确认，改关键词失败后不残留旧分页', async ({ page }) => {
+  await mockSDK(page);
+  await page.route('**/api/maps/search', async route => {
+    const body = route.request().postDataJSON();
+    if (body.keyword === '新搜索') { await route.fulfill({ status: 400, json: { error: { code: 'SEARCH_ERROR', message: '测试查询失败' } } }); return; }
+    await route.fulfill({ json: { data: { places: [{ name: '底图好店', address: '路1', category: '餐饮', location: { lat: 23.13, lng: 113.32, crs: 'GCJ-02', source: 'tencent', providerId: 'page-poi' } }], hasMore: true } } });
+  });
+  await login(page);
+  await page.getByRole('group', { name: '查看方式' }).getByRole('button', { name: '地图', exact: true }).click();
+  await page.getByRole('button', { name: '测试底图店名' }).click();
+  await expect(page.getByRole('region', { name: '地图店铺卡片' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '更多地点' })).toBeVisible();
+  await page.getByRole('button', { name: '更多地点' }).click();
+  await page.getByLabel('城市或区域').fill('广州');
+  await page.getByLabel('地图搜索店名').fill('新搜索');
+  await page.getByRole('button', { name: '搜索店铺' }).click();
+  await expect(page.getByText('测试查询失败')).toBeVisible();
+  await expect(page.getByRole('button', { name: '更多地点' })).toHaveCount(0);
 });

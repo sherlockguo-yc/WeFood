@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { FoodMap } from '../components/FoodMap.js';
+import { MapExplorer } from '../components/MapExplorer.js';
 import { api, type Person, type Restaurant, type TagGroup } from '../api.js';
 import { Button, Chip, Empty, Field, Link, LoadState, PageHead, fmtDay, useLoad } from '../components/Ui.js';
 
@@ -59,14 +59,10 @@ export function Discover() {
       </div>
 
       {!res.data ? <LoadState error={res.error} onRetry={res.reload} />
-        : res.data.libraryEmpty ? (
-          <Empty title="记忆库还是空的">把记得的好店先记下来，下次就能在这里找到。<br /><Link to="/record" className="btn btn-primary">记第一顿</Link></Empty>
-        ) : !res.data.results.length ? (
-          <Empty title="没有符合这些条件的店">条件不会被偷偷放宽，可以减少几个条件再看看。<br /><Button variant="soft" onClick={clear}>清空条件</Button></Empty>
-        ) : view === 'map' ? (
+        : view === 'map' ? (
           <section aria-label="地图找店">
             <p className="muted small">{points.length} 家已标记 · {unlocated.length} 家待标记。点标记查看食记，点数量放大。</p>
-            <FoodMap points={points} onSelect={setMapSelection} />
+            <MapExplorer points={points} onSelect={setMapSelection} onRefresh={res.reload} />
             {picked && <section className="card map-result" aria-label="选中的店铺">
               <h2>{picked.restaurant.name}</h2><p className="small">{picked.restaurant.address}</p>
               <p className="small">{picked.reasons.join('；') || '尚未评价'}</p>
@@ -78,6 +74,10 @@ export function Discover() {
               <ul className="plain-list">{unlocated.map(r => <li key={r.restaurant.id}><Link to={`/restaurants/${r.restaurant.id}`}>{r.restaurant.name}</Link></li>)}</ul>
             </div>}
           </section>
+        ) : res.data.libraryEmpty ? (
+          <Empty title="记忆库还是空的">把记得的好店先记下来，下次就能在这里找到。<br /><Link to="/record" className="btn btn-primary">记第一顿</Link></Empty>
+        ) : !res.data.results.length ? (
+          <Empty title="没有符合这些条件的店">条件不会被偷偷放宽，可以减少几个条件再看看。<br /><Button variant="soft" onClick={clear}>清空条件</Button></Empty>
         ) : (
           <ol className="results" aria-label="推荐结果">
             {res.data.results.map(r => (

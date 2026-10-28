@@ -93,6 +93,10 @@ export function libraryRouter(db: FoodDB) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   function create(t: Resource, owner: string, d: any): Rec {
     check(t, owner, d);
+    if (t === 'restaurants' && d.location?.source === 'tencent') {
+      const existing = s.all('restaurants', owner).find(r => r.location?.source === 'tencent' && r.location.providerId === d.location.providerId);
+      if (existing) return existing;
+    }
     if (t === 'tags' && s.all('tags', owner).some(x => x.name === d.name)) fail(409, 'DUPLICATE', '这个标签已经存在');
     if (t !== 'meals') return s.insert(t, owner, d);
     const { opinions: _ops, ...meal } = d;
@@ -194,6 +198,10 @@ export function libraryRouter(db: FoodDB) {
     const merged = schemas[t].parse({ ...base, ...patch });
     const rec = db.transaction(() => {
       check(t, owner, merged, t === 'meals' && existing.mode === 'dine-in' && existing.restaurantId === (merged as Record<string, unknown>).restaurantId);
+      if (t === 'restaurants') {
+        const location = (merged as Record<string, unknown>).location as { source: string; providerId?: string } | null;
+        if (location?.source === 'tencent' && s.all('restaurants', owner).some(r => r.id !== existing.id && r.location?.source === 'tencent' && r.location.providerId === location.providerId)) fail(409, 'POI_EXISTS', '这家地图店铺已在记忆库中，请直接选择已有店铺，不要覆盖原店历史');
+      }
       if (t !== 'meals') return s.update(t, owner, existing.id, version, merged);
       const { opinions: _ops, ...meal } = merged as Record<string, unknown>;
       const updated = s.update('meals', owner, existing.id, version, meal);

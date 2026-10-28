@@ -5,6 +5,13 @@ export const locationSchema = coordinatesSchema.extend({
   crs: z.literal('GCJ-02'), source: z.enum(['manual', 'tencent']), providerId: z.string().trim().min(1).max(200).optional()
 }).refine(p => p.source !== 'tencent' || !!p.providerId, '腾讯地点需有地点 ID');
 export type FoodLocation = z.infer<typeof locationSchema>;
+export type Place = { name: string; address: string; category: string; location: FoodLocation };
+export type MapPoi = { name: string; lat: number; lng: number };
+export function distanceMeters(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
+  const rad = Math.PI / 180, dlat = (b.lat - a.lat) * rad, dlng = (b.lng - a.lng) * rad;
+  const h = Math.sin(dlat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dlng / 2) ** 2;
+  return 6371000 * 2 * Math.asin(Math.sqrt(Math.min(1, h)));
+}
 export type MapPoint = { id: string; lat: number; lng: number };
 export type PointCluster = { id: string; lat: number; lng: number; members: MapPoint[] };
 
