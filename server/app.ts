@@ -8,6 +8,7 @@ import { libraryRouter } from './library.js';
 import { mediaRouter } from './media.js';
 import { publicShareRouter, shareRouter } from './shares.js';
 import { mapsRouter, type MapsConfig } from './maps.js';
+import { dishReferencesRouter } from './dish-references.js';
 
 export type AppOptions = { db: FoodDB; dataDir: string; setupToken: string; origins: string[]; secureCookie: boolean; staticDir?: string; maps?: MapsConfig; mapsFetch?: typeof fetch };
 
@@ -33,6 +34,7 @@ export function createApp(o: AppOptions) {
   app.use('/api', mediaRouter(o.db, o.dataDir));
   app.use('/api', shareRouter(o.db));
   app.use('/api', insightsRouter(o.db));
+  app.use('/api', dishReferencesRouter());
   app.use('/api', libraryRouter(o.db));
   app.use('/api', (_req, res) => { res.status(404).json({ error: { code: 'NOT_FOUND', message: '接口不存在' } }); });
 

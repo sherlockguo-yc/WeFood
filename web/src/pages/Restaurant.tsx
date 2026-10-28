@@ -198,6 +198,7 @@ export function RestaurantPage({ id }: { id: string }) {
                 <div className="list-main">
                   <h3>{d.name}{d.variant && <span className="muted small">（{d.variant}）</span>}{d.archived && <span className="badge">已归档</span>}</h3>
                   {d.tags.length > 0 && <p className="tags-line">{d.tags.join(' · ')}</p>}
+                  {d.origin && <p className="small"><a href={d.origin.url} target="_blank" rel="noopener noreferrer">菜名来源：{d.origin.publisher}</a> · 品牌参考，非完整菜单 · {d.origin.publishedAt}</p>}
                   {latestByPerson(dishOps(d.id)).map(o => <p className="small" key={o.id}>{pname(o.personId)}：{feelingText(o.feeling, o.again)}{o.note && ` — ${o.note}`}</p>)}
                   <PhotoStrip ids={d.photos} />
                 </div>

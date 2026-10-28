@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { locationSchema } from './geo.js';
+import { dishOriginSchema } from './dishReferences.js';
 export type { Period } from './period.js';
 
 const text = (max = 200) => z.string().trim().max(max);
@@ -31,6 +32,7 @@ export const schemas = {
     name: text(120).min(1, '请填写菜名'),
     restaurantId: z.string().min(1).max(100),
     variant: text(100).default(''),
+    origin: dishOriginSchema.nullable().default(null),
     note: text(4000).default(''),
     tags: tagList,
     archived: z.boolean().default(false),

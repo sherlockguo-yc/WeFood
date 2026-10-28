@@ -237,8 +237,35 @@ test('记录菜品失败可重试、换店不显示旧菜；未收录不冒充�
   await page.getByRole('button', { name: '尚未录菜的店 路2', exact: true }).click();
   await expect(page.getByText('正在加载这家店已记录的菜品…')).toBeVisible();
   await expect(page.getByRole('button', { name: '测试清蒸鱼', exact: true })).toHaveCount(0);
+  await page.getByLabel('新菜名').fill('测试清蒸鱼');
+  await expect(page.getByRole('button', { name: '添加菜品', exact: true })).toBeDisabled();
+  await page.getByLabel('新菜名').press('Enter');
+  await expect(page.getByRole('button', { name: '移除新菜 测试清蒸鱼' })).toHaveCount(0);
   release();
   await expect(page.getByText('尚未记录这家店的菜品')).toBeVisible();
-  await expect(page.getByText('这里只显示你已录入的菜品，不是店铺完整菜单。')).toBeVisible();
+  await expect(page.getByText('已记录菜品不是店铺完整菜单。')).toBeVisible();
   await page.screenshot({ path: 'test-results/record-dishes-empty.png', fullPage: true });
+});
+
+test('新店地图改品牌清除原参考菜和来源，不覆盖保留备注', async ({ page }) => {
+  await mockSDK(page);
+  await page.route('**/api/maps/search', route => route.fulfill({ json: { data: { places: [{ name: '另一个品牌测试店', address: '另一个地址', category: '餐饮', location: { lat: 23.13, lng: 113.32, crs: 'GCJ-02', source: 'tencent', providerId: 'another-brand' } }], hasMore: false } } }));
+  await login(page); await nav(page, '记录').click();
+  const discard = page.getByRole('button', { name: '丢弃草稿' }); if (await discard.isVisible()) await discard.click();
+  await page.getByLabel('店铺', { exact: true }).fill('79号渔船');
+  await page.getByRole('button', { name: '新建「79号渔船」' }).click();
+  await page.getByRole('region', { name: '公开菜品参考' }).getByRole('button', { name: '选择参考菜品 海胆生煎包' }).click();
+  await page.getByLabel('备注', { exact: true }).fill('换品牌保留的备注');
+  await page.getByRole('button', { name: '从真实地图选店 / 标记位置' }).click();
+  await page.getByLabel('城市或区域').fill('广州');
+  await page.getByLabel('地图搜索店名').fill('另一个品牌测试店');
+  await page.getByRole('button', { name: '搜索店铺', exact: true }).click();
+  await page.getByRole('button', { name: '选这家', exact: true }).click();
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: '使用这个位置', exact: true }).click();
+  await expect(page.getByRole('region', { name: '公开菜品参考' })).toHaveCount(0);
+  await expect(page.getByRole('group', { name: '我对海胆生煎包的感受' })).toHaveCount(0);
+  await expect(page.getByLabel('备注', { exact: true })).toHaveValue('换品牌保留的备注');
+  await page.getByRole('button', { name: '保存这一顿' }).click();
+  await expect(page.getByRole('heading', { name: '另一个品牌测试店', level: 1 })).toBeVisible();
 });
