@@ -35,7 +35,18 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
   const people = useLoad(() => api<Person[]>('/people'), []);
   const restaurants = useLoad(() => api<Restaurant[]>('/restaurants?archived=include'), []);
   const groups = useLoad(() => api<TagGroup[]>('/tag-options'), []);
-  const dishes = useLoad(() => (d.restaurantId ? api<Dish[]>(`/dishes?restaurantId=${encodeURIComponent(d.restaurantId)}`) : Promise.resolve([] as Dish[])), [d.restaurantId]);
+  const dishes = useLoad(async () => {
+    const restaurantId = d.restaurantId;
+    const rows: Dish[] = [];
+    if (restaurantId) {
+      for (let offset = 0; ; offset += 1000) {
+        const page = await api<Dish[]>(`/dishes?restaurantId=${encodeURIComponent(restaurantId)}&limit=1000&offset=${offset}`);
+        rows.push(...page);
+        if (page.length < 1000) break;
+      }
+    }
+    return { restaurantId, rows };
+  }, [d.restaurantId]);
 
   const update = (patch: Partial<Draft> | ((x: Draft) => Partial<Draft>)) => { setD(x => ({ ...x, ...(typeof patch === 'function' ? patch(x) : patch) })); setDirty(true); };
   useEffect(() => { if (dirty) localStorage.setItem(storageKey(user.id), JSON.stringify(d)); }, [d, dirty, user.id]);
@@ -53,10 +64,11 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
   const term = search.trim().toLowerCase();
   const matches = term ? active.filter(r => r.name.toLowerCase().includes(term) || r.address.toLowerCase().includes(term)) : active.slice(0, 6);
   const pname = (pid: string) => people.data?.find(p => p.id === pid)?.name ?? '某人';
-  const dishList = (dishes.data ?? []).filter(x => !x.archived);
+  const dishList = !dishes.loading && !dishes.error && dishes.data?.restaurantId === d.restaurantId
+    ? dishes.data.rows.filter(x => !x.archived && x.restaurantId === d.restaurantId) : [];
   const items = [
     { key: SHOP, name: '这家店' },
-    ...d.dishes.map(id => ({ key: id, name: dishes.data?.find(x => x.id === id)?.name ?? '菜品' })),
+    ...d.dishes.map(id => ({ key: id, name: dishList.find(x => x.id === id)?.name ?? '已选菜品（资料暂不可用）' })),
     ...d.newDishes.map(n => ({ key: `new:${n}`, name: n }))
   ];
   const dropItemRatings = (ratings: Record<string, Rating>, itemKey: string) => Object.fromEntries(Object.entries(ratings).filter(([k]) => !k.endsWith(`|${itemKey}`)));
@@ -199,6 +211,11 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
         <section className="card" aria-labelledby="what">
           <h2 className="card-title" id="what">吃了什么</h2>
           <p className="muted small">只选实际吃到的菜，套餐里没吃的不用选。</p>
+          <p className="muted small">这里只显示你已录入的菜品，不是店铺完整菜单。</p>
+          {d.restaurantId && dishes.error ? <Notice tone="error" action={<Button variant="soft" onClick={dishes.reload}>重试加载菜品</Button>}>{dishes.error}</Notice>
+            : d.restaurantId && (dishes.loading || dishes.data?.restaurantId !== d.restaurantId) ? <p className="muted small" role="status">正在加载这家店已记录的菜品…</p>
+            : dishList.length ? <p className="small">已记录菜品（{dishList.length} 道）</p>
+            : <Notice tone="info">尚未记录这家店的菜品</Notice>}
           <div className="chips">
             {dishList.map(x => <Chip key={x.id} on={d.dishes.includes(x.id)} onClick={() => update(s => s.dishes.includes(x.id) ? { dishes: s.dishes.filter(i => i !== x.id), ratings: dropItemRatings(s.ratings, x.id) } : { dishes: [...s.dishes, x.id] })}>{x.name}{x.variant && `（${x.variant}）`}</Chip>)}
             {d.newDishes.map(n => <Chip key={`new:${n}`} on label={`移除新菜 ${n}`} onClick={() => update(s => ({ newDishes: s.newDishes.filter(m => m !== n), ratings: dropItemRatings(s.ratings, `new:${n}`) }))}>{n}（新）</Chip>)}

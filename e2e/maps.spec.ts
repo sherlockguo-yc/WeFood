@@ -202,3 +202,43 @@ test('搜索第一页有更多时不自动确认，改关键词失败后不残�
   await expect(page.getByText('测试查询失败')).toBeVisible();
   await expect(page.getByRole('button', { name: '更多地点' })).toHaveCount(0);
 });
+
+test('记录菜品失败可重试、换店不显示旧菜；未收录不冒充完整菜单', async ({ page }) => {
+  const base = { version: 1, createdAt: '2026-10-28T00:00:00Z', updatedAt: '2026-10-28T00:00:00Z', tags: [], photos: [], note: '' };
+  const restaurants = [
+    { ...base, id: 'menu-a', name: '已有菜品的店', address: '路1', link: '', budget: null },
+    { ...base, id: 'menu-b', name: '尚未录菜的店', address: '路2', link: '', budget: null }
+  ];
+  const dish = { ...base, id: 'dish-a', name: '测试清蒸鱼', restaurantId: 'menu-a', variant: '' };
+  await page.route('**/api/restaurants?archived=include', route => route.fulfill({ json: { data: restaurants } }));
+  let calls = 0, release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/api/dishes?*', async route => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get('restaurantId') === 'menu-a') {
+      calls++;
+      if (calls === 1) { await route.fulfill({ status: 400, json: { error: { code: 'TEST_ERROR', message: '测试菜品查询失败' } } }); return; }
+      await route.fulfill({ json: { data: [dish] } });
+    } else { await pending; await route.fulfill({ json: { data: [] } }); }
+  });
+  await login(page); await nav(page, '记录').click();
+  const discard = page.getByRole('button', { name: '丢弃草稿' }); if (await discard.isVisible()) await discard.click();
+  await page.getByLabel('店铺', { exact: true }).fill('已有菜品的店');
+  await page.getByRole('button', { name: '已有菜品的店 路1', exact: true }).click();
+  await page.getByLabel('备注', { exact: true }).fill('菜品重试也保留的备注');
+  await expect(page.getByText('测试菜品查询失败')).toBeVisible();
+  await page.getByRole('button', { name: '重试加载菜品' }).click();
+  await expect(page.getByRole('button', { name: '测试清蒸鱼', exact: true })).toBeVisible();
+  await expect(page.getByLabel('备注', { exact: true })).toHaveValue('菜品重试也保留的备注');
+  await page.getByRole('button', { name: '测试清蒸鱼', exact: true }).click();
+  await expect(page.getByRole('group', { name: '我对测试清蒸鱼的感受' })).toBeVisible();
+  await page.getByRole('button', { name: '更换', exact: true }).click();
+  await page.getByLabel('店铺', { exact: true }).fill('尚未录菜的店');
+  await page.getByRole('button', { name: '尚未录菜的店 路2', exact: true }).click();
+  await expect(page.getByText('正在加载这家店已记录的菜品…')).toBeVisible();
+  await expect(page.getByRole('button', { name: '测试清蒸鱼', exact: true })).toHaveCount(0);
+  release();
+  await expect(page.getByText('尚未记录这家店的菜品')).toBeVisible();
+  await expect(page.getByText('这里只显示你已录入的菜品，不是店铺完整菜单。')).toBeVisible();
+  await page.screenshot({ path: 'test-results/record-dishes-empty.png', fullPage: true });
+});
