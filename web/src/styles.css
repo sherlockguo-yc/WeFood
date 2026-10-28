@@ -193,6 +193,19 @@ textarea { min-height: 88px; resize: vertical; }
 .rate-row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
 .rate-who { font-size: 13px; font-weight: 600; color: var(--muted); }
 .rate-note { font-size: 15px; }
+.dish-rating-list { display: grid; gap: 12px; margin: 12px 0; }
+.dish-rating { min-width: 0; padding: 14px 12px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.dish-rating.is-selected { border-color: var(--accent); }
+.dish-rating-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; }
+.dish-rating-head h3 { flex: 1; min-width: 120px; font-size: 17px; overflow-wrap: anywhere; }
+.dish-eaten { min-height: 44px; border: 0; padding: 0 8px; background: transparent; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
+.dish-eaten[aria-pressed="true"] { color: var(--accent); }
+.dish-rating-status { margin: 0 0 8px; color: var(--muted); font-size: 12px; }
+.dish-person-rating + .dish-person-rating { border-top: 1px dashed var(--line); margin-top: 12px; padding-top: 10px; }
+.dish-three-ratings { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 5px; }
+.dish-three-ratings .feel { min-width: 0; justify-content: center; padding: 0 4px; }
+.dish-rating-extra { display: grid; gap: 8px; margin-top: 8px; }
+.dish-rating button:disabled { cursor: not-allowed; opacity: .55; }
 
 .photos { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; margin: 8px 0; }
 .photo { position: relative; margin: 0; flex: none; }

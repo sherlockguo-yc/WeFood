@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Plus } from 'lucide-react';
-import { api, message, newKey, type Dish, type Feeling, type Meal, type Person, type Restaurant, type TagGroup, type UserInfo, type FoodLocation } from '../api.js';
+import { api, message, newKey, type Dish, type Meal, type Person, type Restaurant, type TagGroup, type UserInfo, type FoodLocation } from '../api.js';
 import { PlacePicker } from '../components/PlacePicker.js';
 import { DishReferences } from '../components/DishReferences.js';
-import type { DishOrigin } from '../../../shared/dishReferences.js';
+import type { DishOrigin, DishReference } from '../../../shared/dishReferences.js';
+import { DishRatingRow, type DishRating } from '../components/DishRatingRow.js';
 import { navigate } from '../router.js';
 import { Button, Chip, FeelingPicker, Field, Group, Notice, PageHead, PhotoInput, PhotoStrip, TagInput, useLoad } from '../components/Ui.js';
 
-type Rating = { feeling: Feeling | null; again: boolean | null; note: string };
+type Rating = DishRating;
 type Draft = {
   key: string; restaurantId: string; newRestaurant: boolean; restaurantName: string; restaurantTags: string[];
   restaurantAddress: string; restaurantLocation: FoodLocation | null; addressEdited: boolean;
@@ -69,11 +70,36 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
   const pname = (pid: string) => people.data?.find(p => p.id === pid)?.name ?? '某人';
   const dishList = !dishes.loading && !dishes.error && dishes.data?.restaurantId === d.restaurantId
     ? dishes.data.rows.filter(x => !x.archived && x.restaurantId === d.restaurantId) : [];
-  const items = [
-    { key: SHOP, name: '这家店' },
-    ...d.dishes.map(id => ({ key: id, name: dishList.find(x => x.id === id)?.name ?? '已选菜品（资料暂不可用）' })),
-    ...d.newDishes.map(n => ({ key: `new:${n}`, name: n }))
-  ];
+  useEffect(() => {
+    if (busy || dishes.loading || dishes.error || dishes.data?.restaurantId !== d.restaurantId) return;
+    const available = dishes.data.rows;
+    setD(s => {
+      if (s.restaurantId !== dishes.data!.restaurantId) return s;
+      const matched = s.newDishes.flatMap(name => {
+        const existing = available.find(x => !x.archived && x.restaurantId === s.restaurantId && x.name === name && !x.variant);
+        return existing ? [{ name, id: existing.id }] : [];
+      });
+      if (!matched.length) return s;
+      const ratings = { ...s.ratings }, origins = { ...s.dishOrigins };
+      for (const item of matched) {
+        for (const [key, old] of Object.entries(ratings)) {
+          if (!key.endsWith(`|new:${item.name}`)) continue;
+          const target = `${key.slice(0, key.indexOf('|'))}|${item.id}`, current = ratings[target];
+          ratings[target] = current ? { feeling: current.feeling ?? old.feeling, again: current.again ?? old.again, note: [...new Set([current.note, old.note].filter(Boolean))].join('；') } : old;
+          delete ratings[key];
+        }
+        delete origins[item.name];
+      }
+      return { ...s, newDishes: s.newDishes.filter(name => !matched.some(x => x.name === name)), dishes: [...new Set([...s.dishes, ...matched.map(x => x.id)])], ratings, dishOrigins: origins };
+    });
+  }, [busy, dishes.loading, dishes.error, dishes.data, d.restaurantId, d.newDishes]);
+  const items = [{ key: SHOP, name: '这家店' }];
+  const referenceName = d.newRestaurant ? d.restaurantName.trim() : selected?.name.trim() ?? '';
+  const references = useLoad(async () => referenceName
+    ? api<{ name: string; groups: DishReference[] }>(`/dish-references?name=${encodeURIComponent(referenceName)}`)
+    : { name: '', groups: [] as DishReference[] }, [referenceName]);
+  const referenceGroups = !references.loading && !references.error && references.data?.name === referenceName ? references.data.groups : [];
+  const referenceNames = new Set(referenceGroups.flatMap(group => group.names));
   const dropItemRatings = (ratings: Record<string, Rating>, itemKey: string) => Object.fromEntries(Object.entries(ratings).filter(([k]) => !k.endsWith(`|${itemKey}`)));
 
   const dishesPending = !!d.restaurantId && (dishes.loading || !!dishes.error || dishes.data?.restaurantId !== d.restaurantId);
@@ -86,15 +112,29 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
     else update(x => ({ newDishes: x.newDishes.includes(n) ? x.newDishes : [...x.newDishes, n] }));
     setDishText('');
   }
-  function toggleReference(name: string, origin: DishOrigin) {
-    const existing = dishList.find(x => x.name === name && !x.variant);
-    if (existing) {
-      update(x => x.dishes.includes(existing.id) ? { dishes: x.dishes.filter(id => id !== existing.id), ratings: dropItemRatings(x.ratings, existing.id) } : { dishes: [...x.dishes, existing.id] });
-      return;
-    }
-    update(x => x.newDishes.includes(name)
-      ? { newDishes: x.newDishes.filter(n => n !== name), ratings: dropItemRatings(x.ratings, `new:${name}`), dishOrigins: Object.fromEntries(Object.entries(x.dishOrigins).filter(([n]) => n !== name)) }
-      : { newDishes: [...x.newDishes, name], dishOrigins: { ...x.dishOrigins, [name]: origin } });
+  function renderDish(name: string, itemKey: string, origin?: DishOrigin, selectLabel = name) {
+    const isNew = itemKey.startsWith('new:');
+    const picked = isNew ? d.newDishes.includes(name) : d.dishes.includes(itemKey);
+    const select = (s: Draft): Partial<Draft> => isNew
+      ? { newDishes: s.newDishes.includes(name) ? s.newDishes : [...s.newDishes, name], dishOrigins: origin && !s.dishOrigins[name] ? { ...s.dishOrigins, [name]: origin } : s.dishOrigins }
+      : { dishes: s.dishes.includes(itemKey) ? s.dishes : [...s.dishes, itemKey] };
+    return <DishRatingRow key={itemKey} name={name} selected={picked} disabled={busy || dishesPending} selectLabel={selectLabel}
+      raters={d.people.map(id => ({ id, name: pname(id), rating: d.ratings[`${id}|${itemKey}`] ?? { feeling: null, again: null, note: '' } }))}
+      onToggle={() => {
+        if (dishesPending || busy) return;
+        update(s => {
+          const selected = isNew ? s.newDishes.includes(name) : s.dishes.includes(itemKey);
+          if (!selected) return select(s);
+          return { ...(isNew ? { newDishes: s.newDishes.filter(n => n !== name), dishOrigins: Object.fromEntries(Object.entries(s.dishOrigins).filter(([n]) => n !== name)) } : { dishes: s.dishes.filter(id => id !== itemKey) }), ratings: dropItemRatings(s.ratings, itemKey) };
+        });
+      }}
+      onRate={(id, patch) => {
+        if (dishesPending || busy) return;
+        update(s => {
+          const key = `${id}|${itemKey}`, rating = s.ratings[key] ?? { feeling: null, again: null, note: '' };
+          return { ...select(s), ratings: { ...s.ratings, [key]: { ...rating, ...patch } } };
+        });
+      }} />;
   }
   async function addPerson() {
     const name = personText.trim();
@@ -229,31 +269,34 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
 
       {(d.restaurantId || d.newRestaurant) && (
         <section className="card" aria-labelledby="what">
-          <h2 className="card-title" id="what">吃了什么</h2>
-          <p className="muted small">只选实际吃到的菜，套餐里没吃的不用选。</p>
+          <h2 className="card-title" id="what">菜品评价</h2>
+          <p className="muted small">在菜名旁点好吃、一般或不好吃，就会选中并记录评价。没吃的菜不用点。</p>
           <p className="muted small">已记录菜品不是店铺完整菜单。</p>
           {d.restaurantId && dishes.error ? <Notice tone="error" action={<Button variant="soft" onClick={dishes.reload}>重试加载菜品</Button>}>{dishes.error}</Notice>
             : d.restaurantId && (dishes.loading || dishes.data?.restaurantId !== d.restaurantId) ? <p className="muted small" role="status">正在加载这家店已记录的菜品…</p>
             : dishList.length ? <p className="small">已记录菜品（{dishList.length} 道）</p>
             : <Notice tone="info">尚未记录这家店的菜品</Notice>}
-          <div className="chips">
-            {dishList.map(x => <Chip key={x.id} on={d.dishes.includes(x.id)} onClick={() => update(s => s.dishes.includes(x.id) ? { dishes: s.dishes.filter(i => i !== x.id), ratings: dropItemRatings(s.ratings, x.id) } : { dishes: [...s.dishes, x.id] })}>{x.name}{x.variant && `（${x.variant}）`}</Chip>)}
-            {d.newDishes.map(n => <Chip key={`new:${n}`} on label={`移除新菜 ${n}`} onClick={() => update(s => ({ newDishes: s.newDishes.filter(m => m !== n), ratings: dropItemRatings(s.ratings, `new:${n}`), dishOrigins: Object.fromEntries(Object.entries(s.dishOrigins).filter(([name]) => name !== n)) }))}>{n}（新）</Chip>)}
+          <div className="dish-rating-list">
+            {dishList.filter(x => x.variant || !referenceNames.has(x.name)).map(x => renderDish(x.variant ? `${x.name}（${x.variant}）` : x.name, x.id))}
+            {d.newDishes.filter(name => !referenceNames.has(name)).map(name => renderDish(name, `new:${name}`, d.dishOrigins[name], `移除新菜 ${name}`))}
+            {d.dishes.filter(id => !dishList.some(x => x.id === id)).map(id => renderDish('已选菜品（资料暂不可用）', id, undefined, `移除暂不可用菜品 ${id}`))}
           </div>
           <div className="inline-add">
             <input aria-label="新菜名" placeholder="没有的菜直接输入" value={dishText} maxLength={120} onChange={e => setDishText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addDish(); } }} />
             <Button variant="soft" onClick={addDish} disabled={!dishText.trim() || dishesPending}>添加菜品</Button>
           </div>
-          <DishReferences key={d.restaurantId || d.restaurantName} restaurantName={d.newRestaurant ? d.restaurantName : selected?.name ?? ''}
-            disabled={busy || dishesPending}
-            isPicked={name => d.newDishes.includes(name) || dishList.some(x => x.name === name && !x.variant && d.dishes.includes(x.id))}
-            onToggle={toggleReference} />
+          <DishReferences groups={referenceGroups} error={references.error} loading={references.loading || references.data?.name !== referenceName}
+            disabled={busy || dishesPending} onRetry={references.reload}
+            renderDish={(name, origin) => {
+              const existing = dishList.find(x => x.name === name && !x.variant);
+              return renderDish(name, existing?.id ?? `new:${name}`, origin, `选择参考菜品 ${name}`);
+            }} />
         </section>
       )}
 
       {(d.restaurantId || d.newRestaurant) && d.people.length > 0 && (
         <section className="card" aria-labelledby="how">
-          <h2 className="card-title" id="how">感受</h2>
+          <h2 className="card-title" id="how">店铺整体感受</h2>
           <p className="muted small">每个人分开记，不会被合成一个平均分。不评价也可以保存。</p>
           {items.map(it => (
             <div className="rate-block" key={it.key}>

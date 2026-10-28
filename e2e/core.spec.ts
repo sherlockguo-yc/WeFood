@@ -45,9 +45,9 @@ test('私人食记：初始化、记录、选店、多设备、分享与撤销',
   await a.getByRole('button', { name: '添加菜品' }).click();
   await a.getByLabel('新菜名').fill('凉拌木耳');
   await a.getByRole('button', { name: '添加菜品' }).click();
-  await a.getByRole('group', { name: '我对清蒸鱼的感受' }).getByRole('button', { name: '喜欢' }).click();
+  await a.getByRole('group', { name: '我对清蒸鱼的感受' }).getByRole('button', { name: '好吃', exact: true }).click();
   await a.getByRole('group', { name: '女朋友对清蒸鱼的感受' }).getByRole('button', { name: '想再吃' }).click();
-  await a.getByRole('group', { name: '女朋友对凉拌木耳的感受' }).getByRole('button', { name: '不合口味' }).click();
+  await a.getByRole('group', { name: '女朋友对凉拌木耳的感受' }).getByRole('button', { name: '不好吃' }).click();
   await a.getByLabel('我对清蒸鱼的一句话').fill('鲜嫩，不腥');
   await a.getByLabel('花费（元）').fill('128.5');
   await noHorizontalOverflow(a);
