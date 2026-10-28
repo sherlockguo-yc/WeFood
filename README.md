@@ -6,6 +6,16 @@
 - 同一账号可多台手机同时登录；朋友可通过邀请注册独立账号。
 - 分享是发布时的快照，可设 N 天 / N 个月 / 永久有效，随时撤销。
 
+## 公网访问
+
+正式地址：**https://wefood.sherlockguo.com**。本机已有账号已迁移到 N150，可用原用户名和密码登录，不需要再次初始化。
+
+部署走 GitHub Actions → Release（配置 R2 后优先分发）→ webhook → N150 自动部署，源码仓库为 https://github.com/sherlockguo-yc/WeFood。数据与密钥不进入公开仓库或 Release。N150 独立 Node 24，既有 Node 20 服务不变；数据在 `~/wefood/data`、配置在 `~/wefood/.env`、依赖在 `~/wefood-deps`。
+
+腾讯地图已按授权在服务器复用 WeTravel 配置，真实地点搜索和新域名底图加载已通过验证。网址本身不提供 Key，本地开发仍需独立配置。
+
+R2 快速分发尚缺新仓库上传凭据：现有备份凭据不具备 `deploy-artifacts` 桶权限。CI 明确提示缺失并使用 Release 兜底；可在 GitHub Actions Secrets 配置 `R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`、`R2_ACCOUNT_ID`、`R2_BUCKET` 及可选 `R2_ENDPOINT`。
+
 ## 本地运行
 
 需要 Node.js 24。
@@ -48,7 +58,7 @@ npm start          # 同源提供页面和 API，默认 http://127.0.0.1:4318
 
 没有 Key 时明确显示未配置，手填地址仍可使用。地图搜索发送关键词与区域；“我附近”仅在主动点击时请求定位，并通过腾讯转换 GPS 坐标，不持续追踪、不保存个人定位。私人点评、人物和照片不主动发送给地图服务。
 
-当前真实地图/POI调用需要配置可用 Key 后实测；自动化测试使用模拟响应/SDK，不算真实供应商通过。查询、逆地址解析或底图失败均可回到手填地址。
+公网地图已完成真实 Key 下的底图及 POI 验证；本机开发仍需自行配置。自动化测试的模拟响应/SDK只验证行为契约，不能代替真实集成。查询、逆地址解析或底图失败均可回到手填地址。
 
 ## 检查
 

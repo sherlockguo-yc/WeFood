@@ -19,7 +19,7 @@ if (integrity !== 'ok') throw new Error('Migration backup integrity failed');
 const counts = Object.fromEntries(['users', 'restaurants', 'dishes', 'meals', 'opinions', 'attachments', 'shares'].map(t => [t, snapshot.prepare(`SELECT count(*) n FROM ${t}`).get().n]));
 snapshot.close();
 const archive = join(work, 'wefood-private-data.tar.gz');
-execFileSync('tar', ['-czf', archive, '-C', work, 'data']);
+execFileSync('tar', ['-czf', archive, '-C', work, 'data'], { env: { ...process.env, COPYFILE_DISABLE: '1' } });
 const sha256 = createHash('sha256').update(readFileSync(archive)).digest('hex');
 writeFileSync(join(work, 'manifest.json'), JSON.stringify({ counts, sha256 }, null, 2), { mode: 0o600 });
 console.log(JSON.stringify({ archive, sha256, counts }));
