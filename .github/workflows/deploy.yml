@@ -1,0 +1,65 @@
+name: Build and Deploy
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck && npm test && npm run build
+      - name: Version and package
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha=$(git rev-parse --short HEAD)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          mkdir -p pkg
+          cp -r dist package.json package-lock.json pkg/
+          cp scripts/restart-n150.sh pkg/restart.sh
+          chmod +x pkg/restart.sh
+          echo "$sha" > pkg/.version
+          tar -czf wefood.tar.gz -C pkg .
+      - name: Upload release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.version.outputs.sha }}
+          name: ${{ steps.version.outputs.sha }}
+          files: wefood.tar.gz
+          prerelease: true
+      - name: Upload artifact to R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ] || [ -z "$R2_BUCKET" ] || [ -z "$R2_ACCOUNT_ID" ]; then
+            echo "::warning::R2 secrets missing; release available, deploy-agent will use download fallback"
+            exit 0
+          fi
+          endpoint="${R2_ENDPOINT:-https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com}"
+          aws s3 cp wefood.tar.gz "s3://${R2_BUCKET}/wefood/${{ steps.version.outputs.sha }}/wefood.tar.gz" --endpoint-url "$endpoint" --no-progress
+      - name: Notify N150
+        shell: bash
+        run: |
+          curl -fsS -X POST https://wemusic.sherlockguo.com/deploy \
+            -H 'Content-Type: application/json' \
+            -d '{"project":"wefood","version":"${{ steps.version.outputs.sha }}"}' \
+            --max-time 20 --connect-timeout 5

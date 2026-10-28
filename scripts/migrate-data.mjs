@@ -1,0 +1,25 @@
+import Database from 'better-sqlite3';
+import { mkdtempSync, mkdirSync, cpSync, existsSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { resolve, join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+
+const source = resolve(process.env.DATA_DIR || 'data');
+const work = mkdtempSync(join(tmpdir(), 'wefood-migrate-'));
+mkdirSync(join(work, 'data'), { mode: 0o700 });
+const db = new Database(join(source, 'wefood.sqlite'), { readonly: true });
+await db.backup(join(work, 'data/wefood.sqlite'));
+db.close();
+if (existsSync(join(source, 'photos'))) cpSync(join(source, 'photos'), join(work, 'data/photos'), { recursive: true });
+const snapshot = new Database(join(work, 'data/wefood.sqlite'), { readonly: true });
+const integrity = snapshot.pragma('integrity_check', { simple: true });
+if (integrity !== 'ok') throw new Error('Migration backup integrity failed');
+const counts = Object.fromEntries(['users', 'restaurants', 'dishes', 'meals', 'opinions', 'attachments', 'shares'].map(t => [t, snapshot.prepare(`SELECT count(*) n FROM ${t}`).get().n]));
+snapshot.close();
+const archive = join(work, 'wefood-private-data.tar.gz');
+execFileSync('tar', ['-czf', archive, '-C', work, 'data']);
+const sha256 = createHash('sha256').update(readFileSync(archive)).digest('hex');
+writeFileSync(join(work, 'manifest.json'), JSON.stringify({ counts, sha256 }, null, 2), { mode: 0o600 });
+console.log(JSON.stringify({ archive, sha256, counts }));
