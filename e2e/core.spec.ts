@@ -37,6 +37,9 @@ test('私人食记：初始化、记录、选店、多设备、分享与撤销',
   await expect(a.getByRole('button', { name: '女朋友' })).toHaveAttribute('aria-pressed', 'true');
   await a.getByLabel('店铺', { exact: true }).fill('测试小馆');
   await a.getByRole('button', { name: '新建「测试小馆」' }).click();
+  await a.getByRole('button', { name: '保存这一顿' }).click();
+  await expect(a.getByText('堂食请先填写店铺地址，或从地图选择正确分店')).toBeVisible();
+  await a.getByLabel('店铺地址（堂食必填）').fill('测试路 100 号');
   await a.getByRole('group', { name: '店铺标签' }).getByRole('button', { name: '清淡' }).click();
   await a.getByLabel('新菜名').fill('清蒸鱼');
   await a.getByRole('button', { name: '添加菜品' }).click();

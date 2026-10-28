@@ -37,7 +37,7 @@ describe('账号及记忆库', () => {
   it('拒绝跨站写入和非法关联，幂等保存并检测版本冲突', async () => {
     const f = fixture(); const headers = await setup(f);
     expect((await f.agent.post('/api/restaurants').set({ ...headers, Origin: 'https://evil.example' }).send({ name: '店' })).status).toBe(403);
-    const restaurant = (await f.agent.post('/api/restaurants').set(headers).send({ name: '好吃的小店', tags: ['清淡'] })).body.data;
+    const restaurant = (await f.agent.post('/api/restaurants').set(headers).send({ name: '好吃的小店', address: '测试路 1 号', tags: ['清淡'] })).body.data;
     const dish = (await f.agent.post('/api/dishes').set(headers).send({ name: '清蒸鱼', restaurantId: restaurant.id })).body.data;
     const people = (await f.agent.get('/api/people')).body.data;
     const meal = { restaurantId: restaurant.id, date: '2026-10-28T12:00:00+08:00', mode: 'dine-in', dishes: [dish.id], people: [people[0].id], opinions: [{ personId: people[0].id, dishId: dish.id, feeling: 'like', again: true, note: '鲜嫩' }], photos: [] };

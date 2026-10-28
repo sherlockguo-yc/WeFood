@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { locationSchema } from './geo.js';
 export type { Period } from './period.js';
 
 const text = (max = 200) => z.string().trim().max(max);
@@ -18,6 +19,7 @@ export const schemas = {
   restaurants: z.object({
     name: text(120).min(1, '请填写店名'),
     address: text(300).default(''),
+    location: locationSchema.nullable().default(null),
     note: text(4000).default(''),
     link: text(1500).refine(v => !v || /^https?:\/\/[^\s]+$/i.test(v), '链接需使用 http:// 或 https:// 开头').default(''),
     tags: tagList,

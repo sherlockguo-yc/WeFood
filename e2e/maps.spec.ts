@@ -1,0 +1,115 @@
+import { test, expect, type Page } from '@playwright/test';
+
+async function login(page: Page) {
+  await page.goto('/');
+  await page.getByLabel('用户名').fill('e2e_owner');
+  await page.getByLabel('密码').fill('e2e-password-123');
+  await page.getByRole('button', { name: '登录', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '今天吃什么' })).toBeVisible();
+}
+const nav = (p: Page, name: string) => p.getByRole('navigation', { name: '主导航' }).getByRole('link', { name });
+
+async function mockSDK(page: Page) {
+  await page.addInitScript(() => {
+    type Callback = (e: { latLng?: { lat: number; lng: number }; geometry?: { id: string } }) => void;
+    class LatLng { constructor(public lat: number, public lng: number) {} }
+    class MapMock {
+      handlers: Record<string, Callback> = {};
+      zoom = 15;
+      constructor(public element: HTMLElement) {
+        const button = document.createElement('button'); button.type = 'button'; button.textContent = '测试地图落点';
+        button.onclick = () => this.handlers.click?.({ latLng: { lat: 23.132, lng: 113.322 } }); element.append(button);
+      }
+      on(e: string, fn: Callback) { this.handlers[e] = fn; }
+      setCenter() {}
+      setZoom(z: number) { this.zoom = z; this.handlers.zoom?.({}); }
+      getZoom() { return this.zoom; }
+      fitBounds() {}
+      destroy() { this.element.replaceChildren(); }
+    }
+    class MultiMarker {
+      handlers: Record<string, Callback> = {};
+      map: MapMock;
+      constructor(o: { map: MapMock }) { this.map = o.map; }
+      on(e: string, fn: Callback) { this.handlers[e] = fn; }
+      setStyles() {}
+      setStopPropagation() {}
+      setGeometries(g: { id: string }[]) {
+        this.map.element.querySelectorAll('[data-test-marker]').forEach(e => e.remove());
+        g.forEach(p => {
+          const b = document.createElement('button'); b.type = 'button'; b.dataset.testMarker = 'true'; b.textContent = '测试地图标记';
+          b.onclick = () => this.handlers.click?.({ geometry: { id: p.id } }); this.map.element.append(b);
+        });
+      }
+      setMap() { this.map.element.querySelectorAll('[data-test-marker]').forEach(e => e.remove()); }
+    }
+    class Bounds { extend() {} }
+    class MarkerStyle {}
+    Object.assign(window, { TMap: { Map: MapMock, LatLng, MultiMarker, LatLngBounds: Bounds, MarkerStyle } });
+  });
+  await page.route('**/api/maps/config', route => route.fulfill({ json: { data: { jsKey: 'sdk-test-only', searchEnabled: true, provider: 'tencent' } } }));
+}
+
+test('无 Key 时选址降级、取消保留输入，同名分店可新建', async ({ page }) => {
+  await login(page); await nav(page, '记录').click();
+  await page.getByLabel('店铺', { exact: true }).fill('测试小馆');
+  await expect(page.getByRole('button', { name: '新建「测试小馆」' })).toBeVisible();
+  await page.getByRole('button', { name: '新建「测试小馆」' }).click();
+  await page.getByLabel('店铺地址（堂食必填）').fill('另一分店的地址');
+  await page.getByLabel('备注', { exact: true }).fill('选址取消也保留这句话');
+  await page.getByRole('button', { name: '从真实地图选店 / 标记位置' }).click();
+  await expect(page.getByText('尚未配置腾讯地图 JS Key', { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: '取消选址' }).click();
+  await expect(page.getByLabel('店铺地址（堂食必填）')).toHaveValue('另一分店的地址');
+  await expect(page.getByLabel('备注', { exact: true })).toHaveValue('选址取消也保留这句话');
+  await nav(page, '吃什么').click();
+  await page.getByRole('group', { name: '查看方式' }).getByRole('button', { name: '地图', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '待标记的店铺' })).toBeVisible();
+});
+
+test('模拟腾讯契约：POI回填、保存位置、地图标记联动；不冒充真实供应商验证', async ({ page }) => {
+  const errors: string[] = []; page.on('pageerror', e => errors.push(e.message));
+  await mockSDK(page);
+  await page.route('**/api/maps/search', route => route.fulfill({ json: { data: { places: [{ name: '地图选中的店', address: '天河路 10 号', category: '餐饮', location: { lat: 23.13, lng: 113.32, crs: 'GCJ-02', source: 'tencent', providerId: 'test-poi-1' } }], hasMore: false } } }));
+  await page.route('**/api/maps/reverse', route => route.fulfill({ json: { data: { address: '天河路 11 号' } } }));
+  await login(page); await nav(page, '记录').click();
+  const discard = page.getByRole('button', { name: '丢弃草稿' }); if (await discard.isVisible()) await discard.click();
+  await page.getByRole('button', { name: '从真实地图选店 / 标记位置' }).click();
+  await page.getByLabel('城市或区域').fill('广州');
+  await page.getByLabel('地图搜索店名').fill('粥铺');
+  await page.getByRole('button', { name: '搜索店铺' }).click();
+  await page.getByRole('button', { name: '选这家' }).click();
+  await expect(page.getByLabel('候选店铺地址')).toHaveValue('天河路 10 号');
+  await page.getByRole('button', { name: '使用这个位置' }).click();
+  await expect(page.getByLabel('店铺地址（堂食必填）')).toHaveValue('天河路 10 号');
+  await expect(page.getByText('地图选中的店', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '保存这一顿' }).click();
+  await expect(page.getByRole('heading', { level: 1, name: '地图选中的店' })).toBeVisible();
+  await nav(page, '吃什么').click();
+  await page.getByRole('group', { name: '查看方式' }).getByRole('button', { name: '地图', exact: true }).click();
+  await page.getByRole('button', { name: '测试地图标记' }).click();
+  await expect(page.getByRole('region', { name: '选中的店铺' }).getByRole('heading', { name: '地图选中的店' })).toBeVisible();
+  await page.getByRole('link', { name: '查看店铺和点评' }).click();
+  await page.getByRole('button', { name: '编辑', exact: true }).click();
+  await page.getByRole('button', { name: '从真实地图选店 / 标记位置' }).click();
+  await page.getByRole('button', { name: '测试地图落点' }).click();
+  await expect(page.getByLabel('候选店铺地址')).toHaveValue('天河路 11 号');
+  await page.getByRole('button', { name: '使用这个位置' }).click();
+  await page.getByRole('button', { name: '保存店铺', exact: true }).click();
+  await expect(page.getByText('天河路 11 号', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '编辑', exact: true }).click();
+  await page.getByRole('button', { name: '从真实地图选店 / 标记位置' }).click();
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/api/maps/reverse', async route => { await pending; await route.fulfill({ json: { data: { address: '迟到的旧地址' } } }); });
+  const started = page.waitForRequest('**/api/maps/reverse');
+  await page.getByRole('button', { name: '测试地图落点' }).click();
+  await started;
+  await page.getByLabel('候选店铺地址').fill('我手填的新地址');
+  const ended = page.waitForResponse('**/api/maps/reverse'); release(); await ended;
+  await expect(page.getByLabel('候选店铺地址')).toHaveValue('我手填的新地址');
+  await page.getByRole('button', { name: '使用这个位置' }).click();
+  await expect(page.getByLabel('店铺地址')).toHaveValue('我手填的新地址');
+  expect(errors).toEqual([]);
+  await page.screenshot({ path: 'test-results/maps-mobile.png', fullPage: true });
+});

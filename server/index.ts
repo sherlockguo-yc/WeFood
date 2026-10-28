@@ -18,7 +18,7 @@ const setupToken = config.setupToken ?? randomBytes(18).toString('base64url');
 const removed = cleanupOrphanPhotos(db, config.dataDir);
 if (removed) console.log(`已清理 ${removed} 张超过 7 天未使用的照片`);
 
-const app = createApp({ db, dataDir: config.dataDir, setupToken, origins: config.origins, secureCookie: config.secureCookie, staticDir: serveStatic ? staticDir : undefined });
+const app = createApp({ db, dataDir: config.dataDir, setupToken, origins: config.origins, secureCookie: config.secureCookie, maps: config.maps, staticDir: serveStatic ? staticDir : undefined });
 const server = app.listen(config.port, config.host, () => {
   console.log(`WeFood 已启动：http://${config.host}:${config.port}${serveStatic ? '' : '（API，前端由 Vite 提供）'}`);
   if (!db.prepare('SELECT 1 FROM users LIMIT 1').get() && !config.setupToken) {

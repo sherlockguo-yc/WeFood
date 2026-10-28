@@ -236,6 +236,21 @@ details summary { cursor: pointer; min-height: 44px; display: flex; align-items:
 .share-dishes li:first-child { border-top: 0; }
 .preview { border: 2px dashed var(--line); border-radius: var(--radius); padding: 12px; margin-bottom: 16px; }
 
+.record-fields { min-width: 0; border: 0; padding: 0; margin: 0; }
+.record-fields:disabled .map-canvas { pointer-events: none; }
+.place-picker { margin: 12px 0; }
+.place-panel { border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; margin-top: 12px; }
+.place-panel h3 { font-size: 17px; }
+.map-canvas { width: 100%; height: min(52dvh, 380px); min-height: 260px; border-radius: var(--radius-sm); overflow: hidden; background: var(--paper-deep); }
+.food-map { margin: 12px 0; }
+.map-tools { gap: 6px; }
+.poi-list li { display: flex; align-items: center; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.poi-list li > div { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.poi-list .btn { flex: none; }
+.candidate { margin: 12px 0; }
+.view-switch { margin-bottom: 12px; }
+.map-result h2 { font-size: 20px; }
+
 @media (min-width: 720px) {
   .main { padding-top: 32px; }
 }

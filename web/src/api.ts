@@ -1,8 +1,10 @@
+import type { FoodLocation } from '../../shared/geo.js';
+export type { FoodLocation } from '../../shared/geo.js';
 export type Feeling = 'like' | 'neutral' | 'dislike';
 export type Base = { id: string; version: number; createdAt: string; updatedAt: string };
 export type UserInfo = { id: string; username: string; role: string };
 export type Person = Base & { name: string; archived?: boolean };
-export type Restaurant = Base & { name: string; address: string; note: string; link: string; tags: string[]; budget: number | null; archived?: boolean; photos: string[] };
+export type Restaurant = Base & { name: string; address: string; location?: FoodLocation | null; note: string; link: string; tags: string[]; budget: number | null; archived?: boolean; photos: string[] };
 export type Dish = Base & { name: string; restaurantId: string; variant: string; note: string; tags: string[]; archived?: boolean; photos: string[] };
 export type Opinion = Base & { personId: string; dishId?: string; restaurantId: string; mealId?: string; feeling: Feeling | null; again: boolean | null; note: string };
 export type Meal = Base & { restaurantId: string; date: string; mode: 'dine-in' | 'takeaway'; amount: number | null; note: string; people: string[]; dishes: string[]; photos: string[]; opinions: Opinion[] };

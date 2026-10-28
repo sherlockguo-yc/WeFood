@@ -63,11 +63,12 @@ export function libraryRouter(db: FoodDB) {
   const byDate = (a: Rec, b: Rec) => Date.parse(b.date) - Date.parse(a.date);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  function check(t: Resource, owner: string, d: any) {
+  function check(t: Resource, owner: string, d: any, allowLegacyAddress = false) {
     for (const p of d.photos ?? []) s.photo(owner, p);
     if (t === 'dishes') s.need('restaurants', owner, d.restaurantId);
     if (t === 'meals') {
-      s.need('restaurants', owner, d.restaurantId);
+      const restaurant = s.need('restaurants', owner, d.restaurantId);
+      if (d.mode === 'dine-in' && !allowLegacyAddress && !restaurant.address?.trim()) fail(400, 'ADDRESS_REQUIRED', '堂食请先补充店铺地址，再保存这次记录');
       for (const p of d.people) s.need('people', owner, p);
       for (const id of d.dishes) if (s.need('dishes', owner, id).restaurantId !== d.restaurantId) fail(400, 'DISH_RESTAURANT', '所选菜品不属于这家店');
       for (const o of d.opinions) {
@@ -192,7 +193,7 @@ export function libraryRouter(db: FoodDB) {
     }
     const merged = schemas[t].parse({ ...base, ...patch });
     const rec = db.transaction(() => {
-      check(t, owner, merged);
+      check(t, owner, merged, t === 'meals' && existing.mode === 'dine-in' && existing.restaurantId === (merged as Record<string, unknown>).restaurantId);
       if (t !== 'meals') return s.update(t, owner, existing.id, version, merged);
       const { opinions: _ops, ...meal } = merged as Record<string, unknown>;
       const updated = s.update('meals', owner, existing.id, version, meal);

@@ -7,8 +7,9 @@ import { insightsRouter } from './insights.js';
 import { libraryRouter } from './library.js';
 import { mediaRouter } from './media.js';
 import { publicShareRouter, shareRouter } from './shares.js';
+import { mapsRouter, type MapsConfig } from './maps.js';
 
-export type AppOptions = { db: FoodDB; dataDir: string; setupToken: string; origins: string[]; secureCookie: boolean; staticDir?: string };
+export type AppOptions = { db: FoodDB; dataDir: string; setupToken: string; origins: string[]; secureCookie: boolean; staticDir?: string; maps?: MapsConfig; mapsFetch?: typeof fetch };
 
 export function createApp(o: AppOptions) {
   const app = express();
@@ -28,6 +29,7 @@ export function createApp(o: AppOptions) {
   app.use('/api', auth.protect);
   app.use('/api/auth', auth.router);
   app.use('/api', auth.requireAuth);
+  app.use('/api/maps', mapsRouter(o.db, o.maps, o.mapsFetch));
   app.use('/api', mediaRouter(o.db, o.dataDir));
   app.use('/api', shareRouter(o.db));
   app.use('/api', insightsRouter(o.db));

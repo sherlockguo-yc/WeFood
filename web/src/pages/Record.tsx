@@ -1,19 +1,21 @@
 import { useEffect, useState } from 'react';
 import { Plus } from 'lucide-react';
-import { api, message, newKey, type Dish, type Feeling, type Meal, type Person, type Restaurant, type TagGroup, type UserInfo } from '../api.js';
+import { api, message, newKey, type Dish, type Feeling, type Meal, type Person, type Restaurant, type TagGroup, type UserInfo, type FoodLocation } from '../api.js';
+import { PlacePicker } from '../components/PlacePicker.js';
 import { navigate } from '../router.js';
 import { Button, Chip, FeelingPicker, Field, Group, Notice, PageHead, PhotoInput, PhotoStrip, TagInput, useLoad } from '../components/Ui.js';
 
 type Rating = { feeling: Feeling | null; again: boolean | null; note: string };
 type Draft = {
   key: string; restaurantId: string; newRestaurant: boolean; restaurantName: string; restaurantTags: string[];
+  restaurantAddress: string; restaurantLocation: FoodLocation | null; addressEdited: boolean;
   date: string; mode: 'dine-in' | 'takeaway'; people: string[]; dishes: string[]; newDishes: string[];
   ratings: Record<string, Rating>; amount: string; note: string; photos: string[];
 };
 const SHOP = 'shop';
 const storageKey = (uid: string) => `wefood:draft:${uid}`;
 const localNow = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
-const blank = (restaurantId = ''): Draft => ({ key: newKey(), restaurantId, newRestaurant: false, restaurantName: '', restaurantTags: [], date: localNow(), mode: 'dine-in', people: [], dishes: [], newDishes: [], ratings: {}, amount: '', note: '', photos: [] });
+const blank = (restaurantId = ''): Draft => ({ key: newKey(), restaurantId, newRestaurant: false, restaurantName: '', restaurantTags: [], restaurantAddress: '', restaurantLocation: null, addressEdited: false, date: localNow(), mode: 'dine-in', people: [], dishes: [], newDishes: [], ratings: {}, amount: '', note: '', photos: [] });
 const shortHash = (s: string) => { let h = 7; for (const c of s) h = (h * 31 + c.codePointAt(0)!) >>> 0; return h.toString(36); };
 function readDraft(uid: string): Draft | null {
   try { const raw = localStorage.getItem(storageKey(uid)); return raw ? { ...blank(), ...(JSON.parse(raw) as Partial<Draft>) } : null; } catch { return null; }
@@ -42,11 +44,13 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
     if (me) setD(x => (x.people.length ? x : { ...x, people: [me.id] }));
   }, [people.data, d.people.length]);
 
+  const [savedRestaurant, setSavedRestaurant] = useState<Restaurant | null>(null);
   const active = (restaurants.data ?? []).filter(r => !r.archived);
-  const selected = restaurants.data?.find(r => r.id === d.restaurantId);
+  const selected = savedRestaurant?.id === d.restaurantId ? savedRestaurant : restaurants.data?.find(r => r.id === d.restaurantId);
+  const address = d.addressEdited || !selected ? d.restaurantAddress : selected.address;
+  const foodLocation = d.addressEdited || !selected ? d.restaurantLocation : selected.location;
   const term = search.trim().toLowerCase();
   const matches = term ? active.filter(r => r.name.toLowerCase().includes(term) || r.address.toLowerCase().includes(term)) : active.slice(0, 6);
-  const exact = active.some(r => r.name.trim().toLowerCase() === term);
   const pname = (pid: string) => people.data?.find(p => p.id === pid)?.name ?? '某人';
   const dishList = (dishes.data ?? []).filter(x => !x.archived);
   const items = [
@@ -79,6 +83,7 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
 
   async function save() {
     if (!d.restaurantId && !d.newRestaurant) { setError('请先选择或新建一家店'); return; }
+    if (d.mode === 'dine-in' && !address.trim()) { setError('堂食请先填写店铺地址，或从地图选择正确分店'); return; }
     if (!d.people.length) { setError('至少选择一位同行的人'); return; }
     if (!d.date || Number.isNaN(Date.parse(d.date))) { setError('请填写有效的时间'); return; }
     const amount = d.amount.trim() ? Number(d.amount) : null;
@@ -88,8 +93,18 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
     try {
       let rid = cur.restaurantId;
       if (!rid) {
-        const r = await api<Restaurant>('/restaurants', { method: 'POST', key: `${cur.key}-r`, json: { name: cur.restaurantName, tags: cur.restaurantTags } });
-        rid = r.id; cur = { ...cur, restaurantId: rid, newRestaurant: false }; setD(cur);
+        const r = await api<Restaurant>('/restaurants', { method: 'POST', key: `${cur.key}-r`, json: { name: cur.restaurantName, tags: cur.restaurantTags, address: address.trim(), location: foodLocation ?? null } });
+        rid = r.id; cur = { ...cur, restaurantId: rid, newRestaurant: false, addressEdited: false }; setD(cur); setSavedRestaurant(r);
+      } else if (cur.addressEdited) {
+        if (!selected) throw new Error('店铺资料尚未加载，请稍后再保存');
+        try {
+          const r = await api<Restaurant>(`/restaurants/${rid}`, { method: 'PUT', json: { address: address.trim(), location: foodLocation ?? null, version: selected.version } });
+          cur = { ...cur, addressEdited: false }; setD(cur); setSavedRestaurant(r);
+        } catch (e) {
+          const latest = await api<Restaurant>(`/restaurants/${rid}`).catch(() => null);
+          if (latest) setSavedRestaurant(latest);
+          throw e;
+        }
       }
       for (const n of [...cur.newDishes]) {
         const x = await api<Dish>('/dishes', { method: 'POST', key: `${cur.key}-d-${shortHash(n)}`, json: { name: n, restaurantId: rid } });
@@ -111,7 +126,8 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
 
   return (
     <>
-      <PageHead title="记一顿" sub="只填记得的就好，其他可以以后补" />
+      <PageHead title="记一顿" sub="堂食请填店铺地址，其他信息可后补" />
+      <fieldset className="record-fields" disabled={busy}>
       {restored && dirty && <Notice tone="warn" action={<Button variant="ghost" onClick={discard}>丢弃草稿</Button>}>已恢复这台设备上未保存的草稿。草稿只在本机，保存后其他设备才能看到。</Notice>}
 
       <section className="card" aria-labelledby="where">
@@ -119,18 +135,18 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
         {d.restaurantId || d.newRestaurant ? (
           <div className="picked">
             <div><strong>{d.newRestaurant ? d.restaurantName : selected?.name ?? '已选店铺'}</strong>{d.newRestaurant && <span className="badge">新店</span>}</div>
-            <Button variant="ghost" onClick={() => update({ restaurantId: '', newRestaurant: false, restaurantName: '', restaurantTags: [], dishes: [], newDishes: [], ratings: {} })}>更换</Button>
+            <Button variant="ghost" onClick={() => update({ restaurantId: '', newRestaurant: false, restaurantName: '', restaurantTags: [], restaurantAddress: '', restaurantLocation: null, addressEdited: false, dishes: [], newDishes: [], ratings: {} })}>更换</Button>
           </div>
         ) : (
           <>
             <Field label="店铺"><input value={search} onChange={e => setSearch(e.target.value)} placeholder="搜索已有店铺，或输入新店名" maxLength={120} /></Field>
             <div className="pick-list">
               {matches.slice(0, 6).map(r => (
-                <button key={r.id} type="button" className="pick" onClick={() => { update({ restaurantId: r.id, newRestaurant: false, restaurantName: '' }); setSearch(''); }}>
+                <button key={r.id} type="button" className="pick" onClick={() => { update({ restaurantId: r.id, newRestaurant: false, restaurantName: '', addressEdited: false, restaurantAddress: r.address, restaurantLocation: r.location ?? null }); setSearch(''); }}>
                   <span>{r.name}</span>{r.address && <span className="muted small">{r.address}</span>}
                 </button>
               ))}
-              {term && !exact && (
+              {term && (
                 <button type="button" className="pick pick-new" onClick={() => { update({ newRestaurant: true, restaurantName: search.trim(), restaurantId: '' }); setSearch(''); }}>
                   <Plus size={18} aria-hidden />新建「{search.trim()}」
                 </button>
@@ -138,6 +154,10 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
             </div>
           </>
         )}
+        <PlacePicker key={d.restaurantId || 'new'} address={address} location={foodLocation} required={d.mode === 'dine-in'} keyword={d.newRestaurant ? d.restaurantName : selected?.name || search}
+          onChange={p => update({ restaurantAddress: p.address, restaurantLocation: p.location, addressEdited: true,
+            ...(!d.restaurantId && p.name ? { newRestaurant: true, restaurantName: p.name } : {}) })} />
+        {d.restaurantId && d.addressEdited && <p className="muted small">保存这一顿时同时更新店铺位置，已有历史记录保留。</p>}
         {d.newRestaurant && <TagInput label="店铺标签" value={d.restaurantTags} onChange={restaurantTags => update({ restaurantTags })} groups={groups.data ?? []} />}
       </section>
 
@@ -208,6 +228,7 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
         <PhotoInput onAdd={ids => update(s => ({ photos: [...s.photos, ...ids] }))} />
       </section>
 
+      </fieldset>
       <div className="save-bar">
         {error && <Notice tone="error">{error}</Notice>}
         <Button className="btn-block" onClick={() => void save()} disabled={busy}>{busy ? '保存中…' : '保存这一顿'}</Button>

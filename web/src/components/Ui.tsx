@@ -1,4 +1,4 @@
-import { useEffect, useState, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { cloneElement, useEffect, useId, useState, type ButtonHTMLAttributes, type ReactElement, type ReactNode } from 'react';
 import { Camera, ChevronLeft, Heart, Meh, ThumbsDown, X } from 'lucide-react';
 import { api, message, type Feeling, type TagGroup } from '../api.js';
 import { navigate } from '../router.js';
@@ -34,8 +34,12 @@ export function Chip({ on, onClick, children, label }: { on: boolean; onClick: (
   return <button type="button" className={`chip${on ? ' is-on' : ''}`} aria-pressed={on} aria-label={label} onClick={onClick}>{children}</button>;
 }
 
-export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
-  return <label className="field"><span className="field-label">{label}</span>{children}{hint && <span className="field-hint">{hint}</span>}</label>;
+export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactElement<{ id?: string; 'aria-describedby'?: string }> }) {
+  const id = useId();
+  const controlId = children.props.id ?? id;
+  return <div className="field"><label className="field-label" htmlFor={controlId}>{label}</label>
+    {cloneElement(children, { id: controlId, 'aria-describedby': hint ? `${id}-hint` : children.props['aria-describedby'] })}
+    {hint && <span id={`${id}-hint`} className="field-hint">{hint}</span>}</div>;
 }
 
 export function Group({ label, children }: { label: string; children: ReactNode }) {

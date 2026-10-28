@@ -22,7 +22,9 @@
 
 ## 2. 数据与规则
 
-- 业务表：`people`、`restaurants`、`dishes`、`meals`、`opinions`、`tags` 以 JSON 存储字段，带 `owner_id`、`version`；另有 `users`、`sessions`、`invites`、`attachments`、`idempotency_keys`、`shares`。
+- 业务表：`people`、`restaurants`、`dishes`、`meals`、`opinions`、`tags` 以 JSON 存储字段，带 `owner_id`、`version`；另有 `users`、`sessions`、`invites`、`attachments`、`idempotency_keys`、`shares`、`map_usage`。
+- 店铺 `location` 可空，包含 `lat`、`lng`、`crs: GCJ-02`、`source: manual/tencent`、可选 `providerId`（腾讯来源必需）。旧数据无此字段视为未定位。
+- 新建堂食或从外卖切换为堂食需店铺非空地址，前后端均校验；旧无地址堂食在同店编辑仍可维护。外卖不强制地址，历史不批量更改。
 - 所有读写按登录账号的 `owner_id` 过滤；别人的 ID 一律返回 404。关联写入校验人物、店铺、菜品、照片都属于本人。
 - 就餐保存在一个事务内写入就餐与其中的评价；点评的人必须在同行人中，评价的菜必须是本次选中的菜。
 - 店铺、菜品、人物删除为归档，历史保留；就餐删除会同时删除其中的评价。
@@ -74,6 +76,20 @@
 
 ## 7. 验证现状
 
-- `npm test`：11 项 API 测试通过（多设备会话、账号隔离、CSRF/Origin、初始化与邀请、改密码、幂等、版本冲突、关联校验、照片权限与伪装文件、分享快照/撤销/照片、月末到期、选店与统计、导出）。
+- `npm test`：19 项 API/位置/地图适配测试通过（多设备会话、账号隔离、CSRF/Origin、初始化与邀请、改密码、幂等、版本冲突、关联校验、照片权限与伪装文件、分享快照/撤销/照片、月末到期、选店与统计、导出）。
 - `npm run test:e2e`：本机 Chrome、390/360px 手机视口完整流程通过；包含双设备、退出单设备、分享预览/公开/撤销、弱网响应丢失后重试不重复、无横向溢出、无控制台错误。
-- 未验证：iPhone Safari 与安卓真机、PWA 安装、N150 部署、备份恢复演练。
+- 新增 Chrome 地图流程：无 Key 降级、选址取消保留、同名分店新建、模拟 POI 回填保存、地图卡片联动、手动点图、迟到解析不覆盖手填地址。
+- 未验证：真实腾讯 Key 下的底图/POI、iPhone Safari 与安卓真机、PWA 安装、N150 部署、备份恢复演练。
+
+## 8. 店铺位置与地图
+
+- `PlacePicker` 共用于记录页、记忆库新店和店铺编辑。手填地址修改会清除旧坐标，避免地址与地图标记不一致；地图选址确认后保存位置，取消不改草稿。
+- 堂食地址必填；已有店在记录时复用地址并可修改，修改走版本检查，局部保存成功保留资源 ID/版本以便重试；保存期间锁定表单避免响应覆盖新输入。
+- POI 搜索按用户明确提交的城市/区域与关键词查询，分页沿用已提交条件；手动落点使用逆地址解析，失败保留位置供手填。用户手填或改选候选后，迟到解析结果不再回填。
+- “吃什么”提供列表/地图切换，两者使用同一份 `/api/discover` 结果；无坐标的店列在待标记列表。地图使用腾讯 GL SDK，`zoom` 事件刷新客户端像素网格聚合；单标记显示食记卡片，聚合点击放大。
+- `GET /api/maps/config` 登录后返回 JS Key、查询可用状态，不返回 WebService Key/SK。`POST /api/maps/{search,detail,reverse,translate}` 受登录、Origin 和 CSRF 保护。
+- 地图请求固定上游 `apis.map.qq.com`，可选 SK 签名，最多并发 2、超时 10 秒、响应上限 2MB、不自动重试；`map_usage` 持久化每日全局和账号预算，按北京时间日期刷新。
+- 手机原始定位为 WGS84，通过腾讯 `type=1` 转成 GCJ-02 后居中，不持久保存个人定位。地点保存明确 GCJ-02；逆解析不使用行政区划中心代替点击点。
+- 配置：`WEFOOD_TENCENT_JS_KEY`、`WEFOOD_TENCENT_KEY`、可选 `WEFOOD_TENCENT_SK`，以及 `WEFOOD_MAPS_DAILY_LIMIT`/`WEFOOD_MAPS_USER_DAILY_LIMIT`。无 Key 显示明确不可用说明，地址可手填。
+- 沿用 WeTravel 方案但没有改变其代码、Key 或权限；位置没有加入公开分享字段，快照规则保持。地图仅由用户打开相关入口后加载，用户地理查询会发送给腾讯，私人点评/人物/照片不主动发送。
+- 官方动态文档已核对 `MultiMarker.setStyles/setGeometries`、`MarkerStyle`、地图 `zoom`、`destroy/getZoom/fitBounds`、点击 `latLng`、`LatLng.getLat/getLng`；模拟测试不代表真实供应商调用通过。

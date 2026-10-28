@@ -4,7 +4,10 @@ import { ApiError, api, message, newKey, type Dish, type Meal, type Opinion, typ
 import { navigate } from '../router.js';
 import { Button, Field, FeelingPicker, Link, LoadState, Notice, PageHead, PhotoInput, PhotoStrip, TagInput, feelingText, fmtTime, isNegative, isPositive, useLoad, yuan } from '../components/Ui.js';
 
-export type RestaurantInput = { name: string; address: string; link: string; note: string; tags: string[]; budget: number | null; photos: string[] };
+import { PlacePicker } from '../components/PlacePicker.js';
+import type { FoodLocation } from '../api.js';
+
+export type RestaurantInput = { name: string; address: string; location?: FoodLocation | null; link: string; note: string; tags: string[]; budget: number | null; photos: string[] };
 type Overview = { restaurant: Restaurant; dishes: Dish[]; meals: Meal[]; opinions: Opinion[]; people: Person[] };
 
 export function RestaurantForm({ initial, groups, submitLabel, onSubmit, onCancel }: { initial?: RestaurantInput; groups: TagGroup[]; submitLabel: string; onSubmit: (v: RestaurantInput) => Promise<void>; onCancel?: () => void }) {
@@ -20,7 +23,7 @@ export function RestaurantForm({ initial, groups, submitLabel, onSubmit, onCance
     <form className="card" onSubmit={submit}>
       {error && <Notice tone="error">{error}</Notice>}
       <Field label="店名"><input required maxLength={120} value={v.name} onChange={e => set({ name: e.target.value })} placeholder="例如：巷口小馆（体育西店）" /></Field>
-      <Field label="地址或位置" hint="同名分店请写清楚"><input maxLength={300} value={v.address} onChange={e => set({ address: e.target.value })} /></Field>
+      <PlacePicker address={v.address} location={v.location} keyword={v.name} onChange={p => set({ address: p.address, location: p.location, ...(p.name ? { name: p.name } : {}) })} />
       <Field label="店铺链接（可选）" hint="只保存用于跳转，不会读取链接内容"><input type="url" inputMode="url" maxLength={1500} value={v.link} onChange={e => set({ link: e.target.value })} placeholder="https://" /></Field>
       <Field label="人均（元，可选）"><input inputMode="numeric" value={v.budget ?? ''} onChange={e => { const t = e.target.value.replace(/[^\d]/g, ''); set({ budget: t ? Number(t) : null }); }} /></Field>
       <TagInput label="店铺标签" value={v.tags} onChange={tags => set({ tags })} groups={groups} />
@@ -147,10 +150,11 @@ export function RestaurantPage({ id }: { id: string }) {
       {error && <Notice tone="error">{error}</Notice>}
 
       {panel === 'edit' ? (
-        <RestaurantForm initial={{ name: r.name, address: r.address, link: r.link, note: r.note, tags: r.tags, budget: r.budget, photos: r.photos }} groups={tagGroups} submitLabel="保存店铺" onSubmit={saveRestaurant} onCancel={() => setPanel('')} />
+        <RestaurantForm initial={{ name: r.name, address: r.address, location: r.location ?? null, link: r.link, note: r.note, tags: r.tags, budget: r.budget, photos: r.photos }} groups={tagGroups} submitLabel="保存店铺" onSubmit={saveRestaurant} onCancel={() => setPanel('')} />
       ) : (
         <section className="card">
           {r.address && <p className="meta"><MapPin size={16} aria-hidden />{r.address}</p>}
+          {r.location ? <p><Link to={`/?view=map&restaurant=${r.id}`}>在地图上查看这家店</Link></p> : <p className="muted small">还未标记地图位置，可通过编辑补充。</p>}
           {r.budget !== null && <p className="meta">人均约 {r.budget} 元</p>}
           {r.link && <p className="meta"><ExternalLink size={16} aria-hidden /><a href={r.link} target="_blank" rel="noopener noreferrer">打开店铺链接</a></p>}
           {r.note && <p className="note">{r.note}</p>}

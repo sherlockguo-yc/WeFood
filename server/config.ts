@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
 
-export type AppConfig = { port: number; host: string; dataDir: string; origins: string[]; secureCookie: boolean; setupToken?: string };
+import type { MapsConfig } from './maps.js';
+export type AppConfig = { port: number; host: string; dataDir: string; origins: string[]; secureCookie: boolean; setupToken?: string; maps: MapsConfig };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const port = Number(env.PORT ?? 4318);
@@ -16,5 +17,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   }
   const setupToken = env.WEFOOD_SETUP_TOKEN || undefined;
   if (setupToken !== undefined && setupToken.length < 16) throw new Error('WEFOOD_SETUP_TOKEN 至少需要 16 个字符');
-  return { port, host: env.HOST || '127.0.0.1', dataDir: resolve(env.DATA_DIR || 'data'), origins, secureCookie: env.SECURE_COOKIE === 'true', setupToken };
+  const budget = (key: string, fallback: number) => {
+    const v = Number(env[key] || fallback);
+    if (!Number.isSafeInteger(v) || v < 1 || v > 10000) throw new Error(`${key} 必须是 1-10000 的整数`);
+    return v;
+  };
+  const maps: MapsConfig = { jsKey: env.WEFOOD_TENCENT_JS_KEY || '', key: env.WEFOOD_TENCENT_KEY || '', sk: env.WEFOOD_TENCENT_SK || '', dailyLimit: budget('WEFOOD_MAPS_DAILY_LIMIT', 100), userDailyLimit: budget('WEFOOD_MAPS_USER_DAILY_LIMIT', 20) };
+  return { port, host: env.HOST || '127.0.0.1', dataDir: resolve(env.DATA_DIR || 'data'), origins, secureCookie: env.SECURE_COOKIE === 'true', setupToken, maps };
 }
