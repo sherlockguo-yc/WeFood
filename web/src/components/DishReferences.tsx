@@ -10,7 +10,7 @@ export function DishReferences({ groups, error, loading, disabled, onRetry, rend
   if (loading || !groups.length) return null;
   return <section aria-label="公开菜品参考" className="card inset">
     <h3 className="sub-title">公开菜品参考</h3>
-    <p className="small">不是完整菜单；点好吃、一般或不好吃会同时选中这道菜，保存后才进入本次记录。</p>
+    <p className="small">不是完整菜单；先选吃过的菜，再按人评价，也可以不评价。保存后才进入本次记录。</p>
     {groups.map(group => <div key={group.id}>
       <p className="small"><strong>{group.brand}</strong> · {group.names.length} 道品牌发布菜品</p>
       <p className="field-hint">品牌级参考，具体分店与当日供应未核实。资料发布于 {group.origin.publishedAt}，核查于 {group.origin.checkedAt}，可能已经调整。</p>

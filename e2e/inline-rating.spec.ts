@@ -50,6 +50,8 @@ test('三档菜品内联评分、两人口味分开，重点评不重复入口�
   await page.getByRole('button', { name: '再记一顿' }).click();
   const existing = page.getByRole('region', { name: '菜品 清蒸鲈鱼', exact: true });
   await expect(existing.getByRole('button', { name: '清蒸鲈鱼', exact: true })).toHaveAttribute('aria-pressed', 'false');
+  await expect(existing.getByRole('group', { name: /的感受$/ })).toHaveCount(0);
+  await existing.getByRole('button', { name: '清蒸鲈鱼', exact: true }).click();
   await existing.getByRole('group', { name: '我对清蒸鲈鱼的感受', exact: true }).getByRole('button', { name: '好吃', exact: true }).click();
   await expect(existing.getByRole('button', { name: '清蒸鲈鱼', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByRole('region', { name: '店铺整体感受', exact: true }).getByRole('group', { name: /清蒸鲈鱼/ })).toHaveCount(0);
@@ -121,7 +123,14 @@ test('旧草稿同名参考菜合并到已有ID，取消真正清空本次评价
   await expect(rating.getByLabel(`我对${dish.name}的一句话`)).toHaveValue('旧的新菜评价');
   await expect(page.getByRole('group', { name: `我对${dish.name}的感受`, exact: true })).toHaveCount(1);
   await row.getByRole('button', { name: `选择参考菜品 ${dish.name}`, exact: true }).click();
-  await expect(rating.getByRole('button', { name: '不好吃', exact: true })).toHaveAttribute('aria-pressed', 'false');
+  await expect(rating).toHaveCount(0);
+  await row.getByRole('button', { name: `选择参考菜品 ${dish.name}`, exact: true }).click();
+  for (const name of ['好吃', '一般', '不好吃', '想再吃', '不再点']) {
+    await expect(rating.getByRole('button', { name, exact: true })).toHaveAttribute('aria-pressed', 'false');
+  }
+  await expect(rating.getByLabel(`我对${dish.name}的一句话`)).toHaveValue('');
+  await row.getByRole('button', { name: `选择参考菜品 ${dish.name}`, exact: true }).click();
+  await expect(rating).toHaveCount(0);
   const response = page.waitForResponse(r => r.url().endsWith('/api/meals') && r.request().method() === 'POST');
   await page.getByRole('button', { name: '保存这一顿', exact: true }).click();
   const meal = (await (await response).json()).data;

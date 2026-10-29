@@ -17,8 +17,8 @@ export function DishRatingRow({ name, selected, disabled = false, raters, select
       </button>
     </div>
     <p className="dish-rating-status">{evaluated ? '已评价' : selected ? '已选 · 未评价' : '未选 · 未评价'}</p>
-    {raters.length === 0 && <p className="muted small">选择同行人物后即可评价。</p>}
-    {raters.map(p => {
+    {selected && raters.length === 0 && <p className="muted small">选择同行人物后即可评价。</p>}
+    {selected && raters.map(p => {
       const who = `${p.name}对${name}`, r = p.rating;
       return <div className="dish-person-rating" key={p.id} role="group" aria-label={`${who}的感受`}>
         <span className="rate-who">{p.name}</span>

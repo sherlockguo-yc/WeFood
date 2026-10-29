@@ -153,8 +153,9 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
       onRate={(id, patch) => {
         if (dishesPending || busy) return;
         update(s => {
+          if (!(isNew ? s.newDishes.includes(name) : s.dishes.includes(itemKey))) return {};
           const key = `${id}|${itemKey}`, rating = s.ratings[key] ?? { feeling: null, again: null, note: '' };
-          return { ...select(s), ratings: { ...s.ratings, [key]: { ...rating, ...patch } } };
+          return { ratings: { ...s.ratings, [key]: { ...rating, ...patch } } };
         });
       }} />;
   }
@@ -305,7 +306,7 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
       {(d.restaurantId || d.newRestaurant) && (
         <section className="card" aria-labelledby="what">
           <h2 className="card-title" id="what">菜品评价</h2>
-          <p className="muted small">在菜名旁点好吃、一般或不好吃，就会选中并记录评价。没吃的菜不用点。</p>
+          <p className="muted small">先选吃过的菜，再在菜名旁评价好吃、一般或不好吃。也可以只记吃过，不评价。</p>
           <p className="muted small">已记录菜品不是店铺完整菜单。</p>
           {d.restaurantId && dishes.error ? <Notice tone="error" action={<Button variant="soft" onClick={dishes.reload}>重试加载菜品</Button>}>{dishes.error}</Notice>
             : d.restaurantId && (dishes.loading || dishes.data?.restaurantId !== d.restaurantId) ? <p className="muted small" role="status">正在加载这家店已记录的菜品…</p>
