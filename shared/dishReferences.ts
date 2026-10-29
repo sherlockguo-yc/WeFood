@@ -1,17 +1,39 @@
 import { z } from 'zod';
 
 const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
-export const dishOriginSchema = z.object({
+const originSchema = z.object({
   publisher: z.string().trim().min(1).max(120),
   title: z.string().trim().min(1).max(200),
   url: z.string().url().max(2000).refine(value => value.startsWith('https://'), '来源链接必须使用 HTTPS'),
-  publishedAt: day,
+  publishedAt: day.nullable(),
   checkedAt: day,
-  scope: z.literal('brand'),
-  coverage: z.literal('partial')
+  scope: z.enum(['brand', 'branch']),
+  coverage: z.literal('partial'),
+  restaurantName: z.string().max(120).optional(),
+  address: z.string().max(300).optional(),
+  rawName: z.string().max(120).optional()
 });
+export const dishOriginSchema = originSchema.extend({ evidence: z.array(originSchema).max(12).optional() });
 export type DishOrigin = z.infer<typeof dishOriginSchema>;
 export type DishReference = { id: string; brand: string; origin: DishOrigin; names: string[] };
+export type DishCandidate = { id: string; name: string; origins: DishOrigin[] };
+export type CandidateSource = { channel: 'wechat' | 'ctrip'; status: 'ready' | 'idle' | 'empty' | 'failed' | 'stale' | 'pending'; message: string; count: number; origin?: DishOrigin };
+export type SourcePlace = { name: string; address: string; url: string };
+export type DishCandidateResult = { name: string; restaurantId: string; candidates: DishCandidate[]; sources: CandidateSource[]; sourceUrl: string; pending?: SourcePlace };
+export const normalizeDishName = (name: string) => name.normalize('NFKC').replace(/\s+/g, '').trim();
+export function aggregateDishCandidates(groups: DishReference[]): DishCandidate[] {
+  const items = new Map<string, DishCandidate>();
+  for (const group of [...groups].sort((a, b) => Number(b.origin.scope === 'branch') - Number(a.origin.scope === 'branch'))) {
+    for (const rawName of group.names) {
+      const name = rawName.normalize('NFKC').trim().replace(/\s+/g, ' '), key = normalizeDishName(name);
+      if (!key) continue;
+      const item = items.get(key) ?? { id: key, name, origins: [] };
+      if (!item.origins.some(o => o.url === group.origin.url)) item.origins.push({ ...group.origin, rawName });
+      items.set(key, item);
+    }
+  }
+  return [...items.values()];
+}
 
 const fishingBoat: DishReference = {
   id: '79-fishing-boat-summer-2025',

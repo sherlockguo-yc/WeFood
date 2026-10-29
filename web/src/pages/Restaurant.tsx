@@ -198,7 +198,10 @@ export function RestaurantPage({ id }: { id: string }) {
                 <div className="list-main">
                   <h3>{d.name}{d.variant && <span className="muted small">（{d.variant}）</span>}{d.archived && <span className="badge">已归档</span>}</h3>
                   {d.tags.length > 0 && <p className="tags-line">{d.tags.join(' · ')}</p>}
-                  {d.origin && <p className="small"><a href={d.origin.url} target="_blank" rel="noopener noreferrer">菜名来源：{d.origin.publisher}</a> · 品牌参考，非完整菜单 · {d.origin.publishedAt}</p>}
+                  {d.origin && <details className="small">
+                    <summary>菜名来源 · {(d.origin.evidence ?? [d.origin]).length} 个来源 · 非完整菜单</summary>
+                    {(d.origin.evidence ?? [d.origin]).map(origin => <p key={origin.url}><a href={origin.url} target="_blank" rel="noopener noreferrer">{origin.publisher}</a> · {origin.scope === 'branch' ? origin.restaurantName ?? '分店参考' : '品牌参考'} · {origin.publishedAt ?? '发布日期未知'} · 核查于 {origin.checkedAt}{origin.rawName && ` · 原名：${origin.rawName}`}</p>)}
+                  </details>}
                   {latestByPerson(dishOps(d.id)).map(o => <p className="small" key={o.id}>{pname(o.personId)}：{feelingText(o.feeling, o.again)}{o.note && ` — ${o.note}`}</p>)}
                   <PhotoStrip ids={d.photos} />
                 </div>

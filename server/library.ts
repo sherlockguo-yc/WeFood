@@ -2,6 +2,7 @@ import { Router, type Request } from 'express';
 import { randomUUID, createHash } from 'node:crypto';
 import { z } from 'zod';
 import { schemas, type Resource } from '../shared/contracts.js';
+import { normalizeDishName } from '../shared/dishReferences.js';
 import type { FoodDB } from './database.js';
 import { fail } from './errors.js';
 
@@ -95,6 +96,10 @@ export function libraryRouter(db: FoodDB) {
     check(t, owner, d);
     if (t === 'restaurants' && d.location?.source === 'tencent') {
       const existing = s.all('restaurants', owner).find(r => r.location?.source === 'tencent' && r.location.providerId === d.location.providerId);
+      if (existing) return existing;
+    }
+    if (t === 'dishes') {
+      const existing = s.all('dishes', owner).find(x => !x.archived && x.restaurantId === d.restaurantId && normalizeDishName(x.name) === normalizeDishName(d.name) && normalizeDishName(x.variant ?? '') === normalizeDishName(d.variant ?? ''));
       if (existing) return existing;
     }
     if (t === 'tags' && s.all('tags', owner).some(x => x.name === d.name)) fail(409, 'DUPLICATE', '这个标签已经存在');

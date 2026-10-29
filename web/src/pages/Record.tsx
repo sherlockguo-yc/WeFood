@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Plus } from 'lucide-react';
 import { ApiError, api, message, newKey, type Dish, type Meal, type Person, type Restaurant, type TagGroup, type UserInfo, type FoodLocation } from '../api.js';
 import { PlacePicker } from '../components/PlacePicker.js';
 import { DishReferences } from '../components/DishReferences.js';
-import type { DishOrigin, DishReference } from '../../../shared/dishReferences.js';
+import { normalizeDishName, type DishOrigin, type DishCandidateResult, type SourcePlace } from '../../../shared/dishReferences.js';
 import { DishRatingRow, type DishRating } from '../components/DishRatingRow.js';
 import { navigate } from '../router.js';
 import { Button, Chip, FeelingPicker, Field, Group, Notice, PageHead, PhotoInput, PhotoStrip, TagInput, useLoad } from '../components/Ui.js';
@@ -16,6 +16,7 @@ type Draft = {
   dishOrigins: Record<string, DishOrigin>;
   ratings: Record<string, Rating>; amount: string; note: string; photos: string[];
   mealVersion?: number;
+  source?: { target: string; url: string; confirm?: SourcePlace };
 };
 const SHOP = 'shop';
 const storageKey = (uid: string, mealId = '') => mealId ? `wefood:edit-draft:${uid}:${mealId}` : `wefood:draft:${uid}`;
@@ -98,14 +99,14 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
     setD(s => {
       if (s.restaurantId !== dishes.data!.restaurantId) return s;
       const matched = s.newDishes.flatMap(name => {
-        const existing = available.find(x => !x.archived && x.restaurantId === s.restaurantId && x.name === name && !x.variant);
+        const existing = available.find(x => !x.archived && x.restaurantId === s.restaurantId && normalizeDishName(x.name) === normalizeDishName(name) && !x.variant);
         return existing ? [{ name, id: existing.id }] : [];
       });
       if (!matched.length) return s;
       const ratings = { ...s.ratings }, origins = { ...s.dishOrigins };
       for (const item of matched) {
         for (const [key, old] of Object.entries(ratings)) {
-          if (!key.endsWith(`|new:${item.name}`)) continue;
+          if (key.slice(key.indexOf('|') + 1) !== `new:${item.name}`) continue;
           const target = `${key.slice(0, key.indexOf('|'))}|${item.id}`, current = ratings[target];
           ratings[target] = current ? { feeling: current.feeling ?? old.feeling, again: current.again ?? old.again, note: [...new Set([current.note, old.note].filter(Boolean))].join('；') } : old;
           delete ratings[key];
@@ -117,21 +118,59 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
   }, [busy, dishes.loading, dishes.error, dishes.data, d.restaurantId, d.newDishes]);
   const items = [{ key: SHOP, name: '这家店' }];
   const referenceName = d.newRestaurant ? d.restaurantName.trim() : selected?.name.trim() ?? '';
-  const references = useLoad(async () => referenceName
-    ? api<{ name: string; groups: DishReference[] }>(`/dish-references?name=${encodeURIComponent(referenceName)}`)
-    : { name: '', groups: [] as DishReference[] }, [referenceName]);
-  const referenceGroups = !references.loading && !references.error && references.data?.name === referenceName ? references.data.groups : [];
-  const referenceNames = new Set(referenceGroups.flatMap(group => group.names));
-  const dropItemRatings = (ratings: Record<string, Rating>, itemKey: string) => Object.fromEntries(Object.entries(ratings).filter(([k]) => !k.endsWith(`|${itemKey}`)));
+  const referenceTarget = JSON.stringify([d.restaurantId, referenceName, address]);
+  const source = d.source?.target === referenceTarget ? d.source : undefined;
+  const referenceInput = { restaurantId: d.addressEdited ? '' : d.restaurantId, name: referenceName, address, sourceUrl: source?.url ?? '', ...(source?.confirm ? { confirm: source.confirm } : {}) };
+  const referenceKey = JSON.stringify(referenceInput);
+  const currentReference = useRef(referenceKey); currentReference.current = referenceKey;
+  const [fetchedReferences, setFetchedReferences] = useState<{ key: string; data?: DishCandidateResult; error?: string } | null>(null);
+  const [fetchingReference, setFetchingReference] = useState('');
+  const references = useLoad(async () => ({ key: referenceKey, data: await api<DishCandidateResult>('/dish-candidates', { method: 'POST', json: referenceInput }) }), [referenceKey]);
+  const referenceData = fetchedReferences?.key === referenceKey && fetchedReferences.data ? fetchedReferences.data
+    : references.data?.key === referenceKey ? references.data.data : undefined;
+  const referenceCandidates = referenceData?.candidates ?? [];
+  const referenceNames = new Set(referenceCandidates.map(candidate => normalizeDishName(candidate.name)));
+  const referenceBusy = fetchingReference === referenceTarget;
+  const referenceError = fetchedReferences?.key === referenceKey ? fetchedReferences.error : references.error;
+  useEffect(() => {
+    if (busy || !referenceData) return;
+    setD(s => {
+      const origins = { ...s.dishOrigins }; let changed = false;
+      for (const name of s.newDishes) {
+        const candidate = referenceData.candidates.find(c => normalizeDishName(c.name) === normalizeDishName(name));
+        if (!candidate) continue;
+        const old = origins[name], evidence = [...(old?.evidence ?? (old ? [old] : []))];
+        for (const origin of candidate.origins) if (!evidence.some(o => o.url === origin.url)) evidence.push(origin);
+        const next = { ...(old ?? candidate.origins[0]), evidence: evidence.slice(0, 12) };
+        if (JSON.stringify(old) !== JSON.stringify(next)) { origins[name] = next; changed = true; }
+      }
+      return changed ? { ...s, dishOrigins: origins } : s;
+    });
+  }, [referenceData, busy]);
+  async function fetchReferences(url: string, confirm?: SourcePlace) {
+    if (referenceBusy || busy) return;
+    const nextInput = { restaurantId: d.addressEdited ? '' : d.restaurantId, name: referenceName, address, sourceUrl: url, ...(confirm ? { confirm } : {}) };
+    const nextKey = JSON.stringify(nextInput);
+    update({ source: { target: referenceTarget, url, confirm } });
+    currentReference.current = nextKey; setFetchingReference(referenceTarget);
+    setFetchedReferences({ key: nextKey, data: referenceData });
+    try {
+      const data = await api<DishCandidateResult>('/dish-candidates', { method: 'POST', json: { ...nextInput, load: true } });
+      if (currentReference.current === nextKey) setFetchedReferences({ key: nextKey, data });
+    } catch (error) {
+      if (currentReference.current === nextKey) setFetchedReferences({ key: nextKey, data: referenceData, error: message(error) });
+    } finally { setFetchingReference(current => current === referenceTarget ? '' : current); }
+  }
+  const dropItemRatings = (ratings: Record<string, Rating>, itemKey: string) => Object.fromEntries(Object.entries(ratings).filter(([k]) => k.slice(k.indexOf('|') + 1) !== itemKey));
 
   const dishesPending = !!d.restaurantId && (dishes.loading || !!dishes.error || dishes.data?.restaurantId !== d.restaurantId);
   function addDish() {
     if (dishesPending) return;
     const n = dishText.trim();
     if (!n) return;
-    const existing = dishList.find(x => x.name === n);
+    const existing = dishList.find(x => normalizeDishName(x.name) === normalizeDishName(n) && !x.variant);
     if (existing) update(x => ({ dishes: x.dishes.includes(existing.id) ? x.dishes : [...x.dishes, existing.id] }));
-    else update(x => ({ newDishes: x.newDishes.includes(n) ? x.newDishes : [...x.newDishes, n] }));
+    else update(x => ({ newDishes: x.newDishes.some(name => normalizeDishName(name) === normalizeDishName(n)) ? x.newDishes : [...x.newDishes, n] }));
     setDishText('');
   }
   function renderDish(name: string, itemKey: string, origin?: DishOrigin, selectLabel = name) {
@@ -198,13 +237,23 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
           throw e;
         }
       }
+      const matchedSource = referenceData?.sources.find(s => s.channel === 'ctrip' && (s.status === 'ready' || s.status === 'stale'))?.origin;
+      if (cur.source?.target === referenceTarget && matchedSource?.restaurantName && matchedSource.address) {
+        await api('/dish-candidates', { method: 'POST', json: { restaurantId: rid, sourceUrl: matchedSource.url, bind: true, confirm: { name: matchedSource.restaurantName, address: matchedSource.address, url: matchedSource.url } } });
+      }
       for (const n of [...cur.newDishes]) {
         const x = await api<Dish>('/dishes', { method: 'POST', key: `${cur.key}-d-${shortHash(n)}`, json: { name: n, restaurantId: rid, origin: cur.dishOrigins[n] ?? null } });
-        const ratings = Object.fromEntries(Object.entries(cur.ratings).map(([k, v]) => [k.endsWith(`|new:${n}`) ? k.replace(`|new:${n}`, `|${x.id}`) : k, v]));
-        cur = { ...cur, dishes: [...cur.dishes, x.id], newDishes: cur.newDishes.filter(m => m !== n), ratings }; setD(cur);
+        const ratings = { ...cur.ratings };
+        for (const [key, old] of Object.entries(cur.ratings)) {
+          if (key.slice(key.indexOf('|') + 1) !== `new:${n}`) continue;
+          const target = `${key.slice(0, key.indexOf('|'))}|${x.id}`, current = ratings[target];
+          ratings[target] = current ? { feeling: current.feeling ?? old.feeling, again: current.again ?? old.again, note: [...new Set([current.note, old.note].filter(Boolean))].join('；') } : old;
+          delete ratings[key];
+        }
+        cur = { ...cur, dishes: [...new Set([...cur.dishes, x.id])], newDishes: cur.newDishes.filter(m => m !== n), ratings }; setD(cur);
       }
       const opinions = Object.entries(cur.ratings).flatMap(([k, r]) => {
-        const [personId, item] = k.split('|');
+        const separator = k.indexOf('|'), personId = k.slice(0, separator), item = k.slice(separator + 1);
         if (r.feeling === null && r.again === null && !r.note.trim()) return [];
         if (!cur.people.includes(personId) || (item !== SHOP && !cur.dishes.includes(item))) return [];
         return [{ personId, ...(item === SHOP ? {} : { dishId: item }), feeling: r.feeling, again: r.again, note: r.note.trim() }];
@@ -313,20 +362,23 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
             : dishList.length ? <p className="small">已记录菜品（{dishList.length} 道）</p>
             : <Notice tone="info">尚未记录这家店的菜品</Notice>}
           <div className="dish-rating-list">
-            {dishList.filter(x => x.variant || !referenceNames.has(x.name)).map(x => renderDish(x.variant ? `${x.name}（${x.variant}）` : x.name, x.id))}
-            {historicalDishes.filter(x => x.variant || !referenceNames.has(x.name)).map(x => renderDish(`${x.name}${x.variant ? `（${x.variant}）` : ''}（已归档）`, x.id))}
-            {d.newDishes.filter(name => !referenceNames.has(name)).map(name => renderDish(name, `new:${name}`, d.dishOrigins[name], `移除新菜 ${name}`))}
+            {dishList.filter(x => x.variant || !referenceNames.has(normalizeDishName(x.name))).map(x => renderDish(x.variant ? `${x.name}（${x.variant}）` : x.name, x.id))}
+            {historicalDishes.filter(x => x.variant || !referenceNames.has(normalizeDishName(x.name))).map(x => renderDish(`${x.name}${x.variant ? `（${x.variant}）` : ''}（已归档）`, x.id))}
+            {d.newDishes.filter(name => !referenceNames.has(normalizeDishName(name))).map(name => renderDish(name, `new:${name}`, d.dishOrigins[name], `移除新菜 ${name}`))}
             {d.dishes.filter(id => !loadedDishes.some(x => x.id === id)).map(id => renderDish('已选菜品（资料暂不可用）', id, undefined, `移除暂不可用菜品 ${id}`))}
           </div>
           <div className="inline-add">
             <input aria-label="新菜名" placeholder="没有的菜直接输入" value={dishText} maxLength={120} onChange={e => setDishText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addDish(); } }} />
             <Button variant="soft" onClick={addDish} disabled={!dishText.trim() || dishesPending}>添加菜品</Button>
           </div>
-          <DishReferences groups={referenceGroups} error={references.error} loading={references.loading || references.data?.name !== referenceName}
-            disabled={busy || dishesPending} onRetry={references.reload}
-            renderDish={(name, origin) => {
-              const existing = dishList.find(x => x.name === name && !x.variant) ?? historicalDishes.find(x => x.name === name && !x.variant);
-              return renderDish(name, existing?.id ?? `new:${name}`, origin, `选择参考菜品 ${name}`);
+          <DishReferences key={referenceTarget} data={referenceData} error={referenceError} loading={referenceBusy || references.loading}
+            disabled={busy || dishesPending} onRetry={() => { if (source?.url) void fetchReferences(source.url, source.confirm); else { setFetchedReferences(null); references.reload(); } }} onLoad={(url, confirm) => void fetchReferences(url, confirm)}
+            renderDish={candidate => {
+              const name = candidate.name;
+              const existing = dishList.find(x => normalizeDishName(x.name) === normalizeDishName(name) && !x.variant) ?? historicalDishes.find(x => normalizeDishName(x.name) === normalizeDishName(name) && !x.variant);
+              const draftName = d.newDishes.find(n => normalizeDishName(n) === normalizeDishName(name)) ?? name;
+              const origin = { ...candidate.origins[0], evidence: candidate.origins };
+              return renderDish(existing?.name ?? draftName, existing?.id ?? `new:${draftName}`, origin, `选择参考菜品 ${name}`);
             }} />
         </section>
       )}
@@ -366,7 +418,7 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
       </fieldset>
       <div className="save-bar">
         {error && <Notice tone="error">{error}</Notice>}
-        <Button className="btn-block" onClick={() => void save()} disabled={busy || (mealId ? dishesPending : false)}>{busy ? '保存中…' : mealId ? '保存修改' : '保存这一顿'}</Button>
+        <Button className="btn-block" onClick={() => void save()} disabled={busy || referenceBusy || (mealId ? dishesPending : false)}>{busy ? '保存中…' : mealId ? '保存修改' : '保存这一顿'}</Button>
       </div>
     </>
   );

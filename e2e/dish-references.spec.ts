@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { aggregateDishCandidates, getDishReferences, type DishCandidateResult, type DishReference } from '../shared/dishReferences.js';
 
 async function login(page: Page) {
   await page.goto('/');
@@ -19,7 +20,7 @@ test('79号渔船参考可选择点评，仅保存选中菜和来源，回访复
   await expect(reference.getByRole('region', { name: /^菜品 / })).toHaveCount(13);
   await expect(reference.getByRole('group', { name: /的感受$/ })).toHaveCount(0);
   await expect(reference.getByRole('button', { name: /^(好吃|一般|不好吃)$/ })).toHaveCount(0);
-  await expect(reference.getByText(/资料发布于 2025-07-14/)).toBeVisible();
+  await expect(page.getByRole('region', { name: '菜品来源' }).getByText(/资料发布于 2025-07-14/)).toBeVisible();
   await expect(reference.getByText('不是完整菜单；先选吃过的菜，再按人评价，也可以不评价。保存后才进入本次记录。')).toBeVisible();
   const fish = reference.getByRole('button', { name: '选择参考菜品 海贝煲汁青石斑' });
   await expect(fish).toHaveAttribute('aria-pressed', 'false');
@@ -212,4 +213,137 @@ test('已有就餐记录加载失败可重试，未加载前不展示空白编�
   await expect(page.getByRole('button', { name: '保存修改' })).toHaveCount(0);
   await page.getByRole('button', { name: '重试加载记录' }).click();
   await expect(page.getByLabel('备注', { exact: true })).toHaveValue(meal.note);
+});
+
+test('多来源先确认分店、同名只一行，保存全部证据，缓存回访及编辑保留评价', async ({ page, browser }) => {
+  const errors: string[] = []; page.on('pageerror', e => errors.push(e.message));
+  page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+  const url = 'https://you.ctrip.com/food/ctripyouyoustar26/21660849.html';
+  const place = { name: '79号渔船海鲜饭店(岗厦店)', address: '深圳市彩田路福建大厦A座裙楼1-3层', url };
+  const branch: DishReference = { id: url, brand: place.name, names: ['海胆生煎包', '避风塘炒石岩蟹', '椒盐九肚鱼'], origin: { publisher: '携程旅行', title: '分店特色菜', url, publishedAt: null, checkedAt: '2026-10-29', scope: 'branch', coverage: 'partial', restaurantName: place.name, address: place.address } };
+  const bound = new Set<string>(); let reads = 0;
+  await page.route('**/api/dish-candidates', async route => {
+    const input = route.request().postDataJSON();
+    if (!input.load && !input.bind && !bound.has(input.restaurantId)) { await route.continue(); return; }
+    if (input.bind) bound.add(input.restaurantId);
+    if (input.load) reads++;
+    const accepted = !!input.confirm || !!input.bind || bound.has(input.restaurantId);
+    const groups = getDishReferences(input.name || place.name);
+    const data: DishCandidateResult = { name: input.name || place.name, restaurantId: input.restaurantId || '', sourceUrl: url,
+      candidates: aggregateDishCandidates(accepted ? [...groups, branch] : groups),
+      sources: [
+        { channel: 'wechat', status: 'ready', message: '品牌级参考', count: 13, origin: groups[0].origin },
+        { channel: 'ctrip', status: accepted ? 'ready' : 'pending', message: accepted ? '分店特色菜参考，缓存24小时' : '请确认分店', count: 3, origin: branch.origin }
+      ], ...(accepted ? {} : { pending: place }) };
+    await route.fulfill({ json: { data } });
+  });
+  await login(page);
+  await page.getByLabel('店铺', { exact: true }).fill('79号渔船（聚合测试店）');
+  await page.getByRole('button', { name: '新建「79号渔船（聚合测试店）」' }).click();
+  await page.getByLabel('店铺地址（堂食必填）').fill(place.address);
+  const reference = page.getByRole('region', { name: '公开菜品参考' });
+  await expect(reference.getByRole('region', { name: /^菜品 / })).toHaveCount(13);
+  await reference.getByRole('button', { name: '选择参考菜品 海胆生煎包' }).click();
+  await page.getByLabel('我对海胆生煎包的一句话').fill('获取新来源不丢原评价');
+  await page.getByLabel('携程公开餐厅链接').fill(url);
+  await page.getByRole('button', { name: '获取更多菜品', exact: true }).click();
+  await expect(page.getByText('请确认是不是这家分店')).toBeVisible();
+  await expect(reference.getByRole('button', { name: '选择参考菜品 椒盐九肚鱼' })).toHaveCount(0);
+  await page.getByRole('button', { name: '确认是这家分店' }).click();
+  await expect(reference.getByRole('region', { name: /^菜品 / })).toHaveCount(14);
+  const bun = reference.getByRole('region', { name: '菜品 海胆生煎包', exact: true });
+  await expect(bun).toHaveCount(1);
+  await expect(page.getByLabel('我对海胆生煎包的一句话')).toHaveValue('获取新来源不丢原评价');
+  const bunSources = bun.locator('..').locator('details');
+  await bunSources.locator('summary').click();
+  await expect(bunSources.getByRole('link', { name: '携程旅行', exact: true })).toBeVisible();
+  await expect(bunSources.getByRole('link', { name: '79号渔船微信公众号', exact: true })).toBeVisible();
+  const fish = reference.getByRole('region', { name: '菜品 椒盐九肚鱼', exact: true });
+  await expect(fish.getByRole('group', { name: /的感受$/ })).toHaveCount(0);
+  await fish.getByRole('button', { name: '选择参考菜品 椒盐九肚鱼' }).click();
+  await fish.getByRole('button', { name: '好吃', exact: true }).click();
+  for (const width of [320, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+    await page.screenshot({ path: `test-results/dish-multi-source-${width}.png`, fullPage: true });
+  }
+  const desktopContext = await browser.newContext({ storageState: await page.context().storageState(), viewport: { width: 1280, height: 900 }, deviceScaleFactor: 1, isMobile: false });
+  const desktop = await desktopContext.newPage();
+  desktop.on('pageerror', e => errors.push(e.message));
+  await desktop.route('**/api/dish-candidates', route => {
+    const input = route.request().postDataJSON(), groups = getDishReferences(input.name);
+    return route.fulfill({ json: { data: { name: input.name, restaurantId: input.restaurantId, sourceUrl: url, candidates: aggregateDishCandidates([...groups, branch]), sources: [{ channel: 'ctrip', status: 'ready', message: '分店特色菜参考，缓存24小时', count: 3, origin: branch.origin }] } } });
+  });
+  await desktop.goto('/record');
+  await expect(desktop.getByRole('region', { name: '公开菜品参考' }).getByRole('region', { name: /^菜品 / })).toHaveCount(14);
+  expect(await desktop.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+  await desktop.getByRole('region', { name: '菜品来源' }).screenshot({ path: 'test-results/dish-multi-source-desktop-sources.png' });
+  await desktop.screenshot({ path: 'test-results/dish-multi-source-desktop.png', fullPage: true });
+  await desktopContext.close();
+  const saved = page.waitForResponse(r => r.url().endsWith('/api/meals') && r.request().method() === 'POST');
+  await page.getByRole('button', { name: '保存这一顿', exact: true }).click();
+  const meal = (await (await saved).json()).data;
+  await expect(page.getByRole('heading', { name: '79号渔船（聚合测试店）', exact: true })).toBeVisible();
+  const dishes = (await (await page.request.get(`/api/dishes?restaurantId=${meal.restaurantId}`)).json()).data;
+  expect(dishes).toHaveLength(2);
+  expect(dishes.find((d: { name: string }) => d.name === '海胆生煎包').origin.evidence).toHaveLength(2);
+  expect(dishes.find((d: { name: string }) => d.name === '椒盐九肚鱼').origin.scope).toBe('branch');
+  await page.getByRole('button', { name: '编辑这次记录', exact: true }).click();
+  await expect(reference.getByRole('region', { name: /^菜品 / })).toHaveCount(14);
+  await expect(page.getByLabel('我对海胆生煎包的一句话')).toHaveValue('获取新来源不丢原评价');
+  expect(reads).toBe(2); expect(errors).toEqual([]);
+});
+
+test('没有公众号也可获取分店候选，单渠道失败保留品牌参考与输入，换店不串结果', async ({ page }) => {
+  await login(page);
+  const url = 'https://you.ctrip.com/food/test26/100.html';
+  await page.route('**/api/dish-candidates', async route => {
+    const input = route.request().postDataJSON();
+    if (!input.load) { await route.continue(); return; }
+    const groups = getDishReferences(input.name);
+    const group: DishReference = { id: url, brand: input.name, names: ['普通小馆蒸鱼'], origin: { publisher: '携程旅行', title: '本店特色美食', url, publishedAt: null, checkedAt: '2026-10-29', scope: 'branch', coverage: 'partial', restaurantName: input.name, address: input.address } };
+    const data: DishCandidateResult = { name: input.name, restaurantId: '', sourceUrl: url, candidates: aggregateDishCandidates(groups.length ? groups : [group]), sources: [{ channel: 'ctrip', status: groups.length ? 'failed' : 'ready', count: groups.length ? 0 : 1, message: groups.length ? '公开页面暂不可读' : '分店特色菜参考', origin: groups.length ? undefined : group.origin }] };
+    await route.fulfill({ json: { data } });
+  });
+  await page.getByLabel('店铺', { exact: true }).fill('普通小馆');
+  await page.getByRole('button', { name: '新建「普通小馆」' }).click();
+  await page.getByLabel('携程公开餐厅链接').fill(url);
+  await page.getByRole('button', { name: '获取更多菜品', exact: true }).click();
+  await expect(page.getByRole('button', { name: '选择参考菜品 普通小馆蒸鱼' })).toBeVisible();
+  await expect(page.getByRole('group', { name: /蒸鱼的感受$/ })).toHaveCount(0);
+  await page.getByRole('button', { name: '更换', exact: true }).click();
+  await page.getByLabel('店铺', { exact: true }).fill('79号渔船');
+  await page.getByRole('button', { name: '新建「79号渔船」' }).click();
+  await expect(page.getByRole('button', { name: '选择参考菜品 普通小馆蒸鱼' })).toHaveCount(0);
+  await page.getByLabel('备注', { exact: true }).fill('来源失败保留');
+  await page.getByRole('button', { name: '选择参考菜品 海胆生煎包' }).click();
+  await page.getByLabel('我对海胆生煎包的一句话').fill('评分备注也保留');
+  await page.getByLabel('携程公开餐厅链接').fill(url);
+  await page.getByRole('button', { name: '获取更多菜品', exact: true }).click();
+  await expect(page.getByText('公开页面暂不可读', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('备注', { exact: true })).toHaveValue('来源失败保留');
+  await expect(page.getByLabel('我对海胆生煎包的一句话')).toHaveValue('评分备注也保留');
+  await expect(page.getByRole('region', { name: '公开菜品参考' }).getByRole('region', { name: /^菜品 / })).toHaveCount(13);
+});
+
+test('特殊菜名评分不会按后缀串菜，取消只影响本菜', async ({ page }) => {
+  await login(page);
+  await page.getByLabel('店铺', { exact: true }).fill('评分键边界测试店');
+  await page.getByRole('button', { name: '新建「评分键边界测试店」' }).click();
+  await page.getByLabel('店铺地址（堂食必填）').fill('测试路1号');
+  for (const name of ['汤', '鱼|new:汤']) {
+    await page.getByLabel('新菜名').fill(name);
+    await page.getByRole('button', { name: '添加菜品', exact: true }).click();
+    await page.getByRole('region', { name: `菜品 ${name}`, exact: true }).getByRole('button', { name: '好吃', exact: true }).click();
+  }
+  await page.getByRole('button', { name: '移除新菜 汤', exact: true }).click();
+  await expect(page.getByRole('region', { name: '菜品 鱼|new:汤', exact: true }).getByRole('button', { name: '好吃', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByLabel('新菜名').fill('汤');
+  await page.getByRole('button', { name: '添加菜品', exact: true }).click();
+  await page.getByRole('region', { name: '菜品 汤', exact: true }).getByRole('button', { name: '一般', exact: true }).click();
+  const saved = page.waitForResponse(r => r.url().endsWith('/api/meals') && r.request().method() === 'POST');
+  await page.getByRole('button', { name: '保存这一顿', exact: true }).click();
+  const meal = (await (await saved).json()).data;
+  expect(meal.opinions).toHaveLength(2);
+  expect(meal.opinions.map((o: { feeling: string }) => o.feeling).sort()).toEqual(['like', 'neutral']);
 });
