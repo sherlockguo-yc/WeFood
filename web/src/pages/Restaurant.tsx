@@ -220,7 +220,10 @@ export function RestaurantPage({ id }: { id: string }) {
               <li className="card" key={m.id}>
                 <div className="split">
                   <div><strong>{fmtTime(m.date)}</strong> <span className="badge">{m.mode === 'takeaway' ? '外卖' : '堂食'}</span>{m.amount !== null && <span className="muted small"> {yuan(m.amount)}</span>}</div>
-                  <Button variant="ghost" aria-label="删除这次记录" onClick={() => { if (confirm('删除这次就餐记录和其中的评价？')) void act(() => api(`/meals/${m.id}`, { method: 'DELETE' }), '已删除这次记录'); }}><Trash2 size={16} aria-hidden /></Button>
+                  <div className="row">
+                    <Button variant="ghost" aria-label="编辑这次记录" onClick={() => navigate(`/record?meal=${encodeURIComponent(m.id)}`)}><Pencil size={16} aria-hidden /></Button>
+                    <Button variant="ghost" aria-label="删除这次记录" onClick={() => { if (confirm('删除这次就餐记录和其中的评价？')) void act(() => api(`/meals/${m.id}`, { method: 'DELETE' }), '已删除这次记录'); }}><Trash2 size={16} aria-hidden /></Button>
+                  </div>
                 </div>
                 <p className="small muted">和 {m.people.map(pname).join('、') || '—'}{m.dishes.length > 0 && ` · 吃了 ${m.dishes.map(dname).join('、')}`}</p>
                 {m.opinions.length > 0 && <ul className="op-list">{m.opinions.map(o => <li key={o.id}>{pname(o.personId)} · {o.dishId ? dname(o.dishId) : '整体'}：{feelingText(o.feeling, o.again)}{o.note && ` — ${o.note}`}</li>)}</ul>}

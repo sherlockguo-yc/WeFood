@@ -113,6 +113,8 @@ test('旧草稿同名参考菜合并到已有ID，取消真正清空本次评价
     }));
   }, { userId: user.id, personId: person.id, restaurantId: referenceRestaurant.id, name: dish.name });
   await page.goto('/record');
+  await expect(page.getByRole('region', { name: '公开菜品参考' }).getByRole('button', { name: `选择参考菜品 ${dish.name}`, exact: true })).toBeVisible();
+  await expect(page.getByRole('group', { name: `我对${dish.name}的感受`, exact: true })).toHaveCount(1);
   const row = page.getByRole('region', { name: `菜品 ${dish.name}`, exact: true });
   const rating = row.getByRole('group', { name: `我对${dish.name}的感受`, exact: true });
   await expect(rating.getByRole('button', { name: '不好吃', exact: true })).toHaveAttribute('aria-pressed', 'true');

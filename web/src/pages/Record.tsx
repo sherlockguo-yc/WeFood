@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Plus } from 'lucide-react';
-import { api, message, newKey, type Dish, type Meal, type Person, type Restaurant, type TagGroup, type UserInfo, type FoodLocation } from '../api.js';
+import { ApiError, api, message, newKey, type Dish, type Meal, type Person, type Restaurant, type TagGroup, type UserInfo, type FoodLocation } from '../api.js';
 import { PlacePicker } from '../components/PlacePicker.js';
 import { DishReferences } from '../components/DishReferences.js';
 import type { DishOrigin, DishReference } from '../../../shared/dishReferences.js';
@@ -15,28 +15,48 @@ type Draft = {
   date: string; mode: 'dine-in' | 'takeaway'; people: string[]; dishes: string[]; newDishes: string[];
   dishOrigins: Record<string, DishOrigin>;
   ratings: Record<string, Rating>; amount: string; note: string; photos: string[];
+  mealVersion?: number;
 };
 const SHOP = 'shop';
-const storageKey = (uid: string) => `wefood:draft:${uid}`;
+const storageKey = (uid: string, mealId = '') => mealId ? `wefood:edit-draft:${uid}:${mealId}` : `wefood:draft:${uid}`;
 const localNow = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
 const blank = (restaurantId = ''): Draft => ({ key: newKey(), restaurantId, newRestaurant: false, restaurantName: '', restaurantTags: [], restaurantAddress: '', restaurantLocation: null, addressEdited: false, date: localNow(), mode: 'dine-in', people: [], dishes: [], newDishes: [], dishOrigins: {}, ratings: {}, amount: '', note: '', photos: [] });
 const shortHash = (s: string) => { let h = 7; for (const c of s) h = (h * 31 + c.codePointAt(0)!) >>> 0; return h.toString(36); };
-function readDraft(uid: string): Draft | null {
-  try { const raw = localStorage.getItem(storageKey(uid)); return raw ? { ...blank(), ...(JSON.parse(raw) as Partial<Draft>) } : null; } catch { return null; }
+function readDraft(uid: string, mealId: string): Draft | null {
+  try { const raw = localStorage.getItem(storageKey(uid, mealId)); return raw ? { ...blank(), ...(JSON.parse(raw) as Partial<Draft>) } : null; } catch { return null; }
+}
+function mealDraft(meal: Meal): Draft {
+  const date = new Date(meal.date);
+  date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+  return {
+    ...blank(meal.restaurantId), mealVersion: meal.version, date: date.toISOString().slice(0, -1), mode: meal.mode,
+    people: meal.people, dishes: meal.dishes, photos: meal.photos, note: meal.note,
+    amount: meal.amount === null ? '' : String(meal.amount / 100),
+    ratings: Object.fromEntries(meal.opinions.map(o => [`${o.personId}|${o.dishId ?? SHOP}`, { feeling: o.feeling, again: o.again, note: o.note }]))
+  };
 }
 
 export function Record({ user, loc }: { user: UserInfo; loc: string }) {
-  const preset = new URLSearchParams(loc.split('?')[1] ?? '').get('restaurant') ?? '';
-  const [restored] = useState(() => readDraft(user.id));
+  const params = new URLSearchParams(loc.split('?')[1] ?? '');
+  const mealId = params.get('meal') ?? '';
+  const preset = mealId ? '' : params.get('restaurant') ?? '';
+  const [restored, setRestored] = useState(() => readDraft(user.id, mealId));
   const [d, setD] = useState<Draft>(() => restored ?? blank(preset));
   const [dirty, setDirty] = useState(!!restored);
+  const [originalMeal, setOriginalMeal] = useState<Meal | null>(null);
+  const meal = useLoad(() => mealId ? api<Meal>(`/meals/${encodeURIComponent(mealId)}`) : Promise.resolve(null), [mealId]);
+  useEffect(() => {
+    if (!mealId || !meal.data || originalMeal) return;
+    setOriginalMeal(meal.data);
+    setD(restored ? { ...restored, restaurantId: meal.data.restaurantId, newRestaurant: false, addressEdited: false, mealVersion: restored.mealVersion ?? meal.data.version } : mealDraft(meal.data));
+  }, [mealId, meal.data, originalMeal, restored]);
   const [presetPending, setPresetPending] = useState(!!restored && !!preset && restored.restaurantId !== preset);
   const [search, setSearch] = useState('');
   const [dishText, setDishText] = useState('');
   const [personText, setPersonText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const people = useLoad(() => api<Person[]>('/people'), []);
+  const people = useLoad(() => api<Person[]>(mealId ? '/people?archived=include' : '/people'), [mealId]);
   const restaurants = useLoad(() => api<Restaurant[]>('/restaurants?archived=include'), []);
   const groups = useLoad(() => api<TagGroup[]>('/tag-options'), []);
   const dishes = useLoad(async () => {
@@ -44,21 +64,21 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
     const rows: Dish[] = [];
     if (restaurantId) {
       for (let offset = 0; ; offset += 1000) {
-        const page = await api<Dish[]>(`/dishes?restaurantId=${encodeURIComponent(restaurantId)}&limit=1000&offset=${offset}`);
+        const page = await api<Dish[]>(`/dishes?restaurantId=${encodeURIComponent(restaurantId)}${mealId ? '&archived=include' : ''}&limit=1000&offset=${offset}`);
         rows.push(...page);
         if (page.length < 1000) break;
       }
     }
     return { restaurantId, rows };
-  }, [d.restaurantId]);
+  }, [d.restaurantId, mealId]);
 
   const update = (patch: Partial<Draft> | ((x: Draft) => Partial<Draft>)) => { setD(x => ({ ...x, ...(typeof patch === 'function' ? patch(x) : patch) })); setDirty(true); };
-  useEffect(() => { if (dirty) localStorage.setItem(storageKey(user.id), JSON.stringify(d)); }, [d, dirty, user.id]);
+  useEffect(() => { if (dirty && (!mealId || originalMeal)) localStorage.setItem(storageKey(user.id, mealId), JSON.stringify(d)); }, [d, dirty, user.id, mealId, originalMeal]);
   useEffect(() => {
-    if (!people.data || d.people.length) return;
+    if (mealId || !people.data || d.people.length) return;
     const me = people.data.find(p => p.name === '我') ?? people.data[0];
     if (me) setD(x => (x.people.length ? x : { ...x, people: [me.id] }));
-  }, [people.data, d.people.length]);
+  }, [people.data, d.people.length, mealId]);
 
   const [savedRestaurant, setSavedRestaurant] = useState<Restaurant | null>(null);
   const active = (restaurants.data ?? []).filter(r => !r.archived);
@@ -68,8 +88,10 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
   const term = search.trim().toLowerCase();
   const matches = term ? active.filter(r => r.name.toLowerCase().includes(term) || r.address.toLowerCase().includes(term)) : active.slice(0, 6);
   const pname = (pid: string) => people.data?.find(p => p.id === pid)?.name ?? '某人';
-  const dishList = !dishes.loading && !dishes.error && dishes.data?.restaurantId === d.restaurantId
-    ? dishes.data.rows.filter(x => !x.archived && x.restaurantId === d.restaurantId) : [];
+  const loadedDishes = !dishes.loading && !dishes.error && dishes.data?.restaurantId === d.restaurantId
+    ? dishes.data.rows.filter(x => x.restaurantId === d.restaurantId) : [];
+  const dishList = loadedDishes.filter(x => !x.archived);
+  const historicalDishes = loadedDishes.filter(x => x.archived && d.dishes.includes(x.id));
   useEffect(() => {
     if (busy || dishes.loading || dishes.error || dishes.data?.restaurantId !== d.restaurantId) return;
     const available = dishes.data.rows;
@@ -145,13 +167,14 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
     } catch (x) { setError(message(x)); }
   }
   function discard() {
-    localStorage.removeItem(storageKey(user.id));
-    setD(blank(preset)); setDirty(false); setError('');
+    localStorage.removeItem(storageKey(user.id, mealId));
+    setD(originalMeal ? mealDraft(originalMeal) : blank(preset)); setRestored(null); setDirty(false); setError('');
   }
 
   async function save() {
+    if (busy || (mealId && (!originalMeal || dishesPending))) return;
     if (!d.restaurantId && !d.newRestaurant) { setError('请先选择或新建一家店'); return; }
-    if (d.mode === 'dine-in' && !address.trim()) { setError('堂食请先填写店铺地址，或从地图选择正确分店'); return; }
+    if (d.mode === 'dine-in' && !address.trim() && originalMeal?.mode !== 'dine-in') { setError('堂食请先填写店铺地址，或从地图选择正确分店'); return; }
     if (!d.people.length) { setError('至少选择一位同行的人'); return; }
     if (!d.date || Number.isNaN(Date.parse(d.date))) { setError('请填写有效的时间'); return; }
     const amount = d.amount.trim() ? Number(d.amount) : null;
@@ -185,16 +208,27 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
         if (!cur.people.includes(personId) || (item !== SHOP && !cur.dishes.includes(item))) return [];
         return [{ personId, ...(item === SHOP ? {} : { dishId: item }), feeling: r.feeling, again: r.again, note: r.note.trim() }];
       });
-      await api<Meal>('/meals', { method: 'POST', key: cur.key, json: { restaurantId: rid, date: new Date(cur.date).toISOString(), mode: cur.mode, amount: amount === null ? null : Math.round(amount * 100), note: cur.note.trim(), people: cur.people, dishes: cur.dishes, opinions, photos: cur.photos } });
-      localStorage.removeItem(storageKey(user.id));
+      await api<Meal>(mealId ? `/meals/${encodeURIComponent(mealId)}` : '/meals', { method: mealId ? 'PUT' : 'POST', ...(mealId ? {} : { key: cur.key }), json: { restaurantId: rid, date: new Date(cur.date).toISOString(), mode: cur.mode, amount: amount === null ? null : Math.round(amount * 100), note: cur.note.trim(), people: cur.people, dishes: cur.dishes, opinions, photos: cur.photos, ...(mealId ? { version: cur.mealVersion } : {}) } });
+      localStorage.removeItem(storageKey(user.id, mealId));
       setDirty(false);
       navigate(`/restaurants/${rid}`);
-    } catch (x) { setError(message(x)); } finally { setBusy(false); }
+    } catch (x) {
+      if (mealId && x instanceof ApiError && x.code === 'VERSION_CONFLICT') {
+        const latest = await api<Meal>(`/meals/${encodeURIComponent(mealId)}`).catch(() => null);
+        if (latest) { setOriginalMeal(latest); update({ mealVersion: latest.version }); }
+        setError(`其他设备刚修改过这次就餐记录${latest ? `（最新备注：${latest.note || '无'}）` : ''}。你的输入仍保留，${latest ? '再次保存将以你的内容为准。' : '请稍后重试。'}`);
+      } else setError(message(x));
+    } finally { setBusy(false); }
   }
+
+  if (mealId && !originalMeal) return <>
+    <PageHead title="编辑这一顿" back="/library" />
+    {meal.error ? <Notice tone="error" action={<Button variant="soft" onClick={meal.reload}>重试加载记录</Button>}>{meal.error}</Notice> : <p className="muted loading" role="status">正在加载这次就餐记录…</p>}
+  </>;
 
   return (
     <>
-      <PageHead title="记一顿" sub="堂食请填店铺地址，其他信息可后补" />
+      <PageHead title={mealId ? '编辑这一顿' : '记一顿'} back={mealId ? `/restaurants/${d.restaurantId}` : undefined} sub={mealId ? '补记菜品或调整评价，保存后更新原记录' : '堂食请填店铺地址，其他信息可后补'} />
       <fieldset className="record-fields" disabled={busy}>
       {presetPending && <Notice tone="warn">当前恢复了另一家店的草稿，没有覆盖原输入。
         <div className="row"><Button variant="soft" onClick={() => { update({ restaurantId: preset, newRestaurant: false, restaurantName: '', restaurantAddress: '', restaurantLocation: null, addressEdited: false, dishes: [], newDishes: [], dishOrigins: {}, ratings: {} }); setPresetPending(false); }}>改用地图选中的店</Button>
@@ -207,7 +241,7 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
         {d.restaurantId || d.newRestaurant ? (
           <div className="picked">
             <div><strong>{d.newRestaurant ? d.restaurantName : selected?.name ?? '已选店铺'}</strong>{d.newRestaurant && <span className="badge">新店</span>}</div>
-            <Button variant="ghost" onClick={() => update({ restaurantId: '', newRestaurant: false, restaurantName: '', restaurantTags: [], restaurantAddress: '', restaurantLocation: null, addressEdited: false, dishes: [], newDishes: [], dishOrigins: {}, ratings: {} })}>更换</Button>
+            {!mealId && <Button variant="ghost" onClick={() => update({ restaurantId: '', newRestaurant: false, restaurantName: '', restaurantTags: [], restaurantAddress: '', restaurantLocation: null, addressEdited: false, dishes: [], newDishes: [], dishOrigins: {}, ratings: {} })}>更换</Button>}
           </div>
         ) : (
           <>
@@ -226,7 +260,7 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
             </div>
           </>
         )}
-        <PlacePicker key={d.restaurantId || 'new'} address={address} location={foodLocation} required={d.mode === 'dine-in'} keyword={d.newRestaurant ? d.restaurantName : selected?.name || search}
+        {!mealId && <PlacePicker key={d.restaurantId || 'new'} address={address} location={foodLocation} required={d.mode === 'dine-in'} keyword={d.newRestaurant ? d.restaurantName : selected?.name || search}
           onChange={p => {
             const existing = p.location?.source === 'tencent' ? restaurants.data?.find(r => r.location?.source === 'tencent' && r.location.providerId === p.location!.providerId) : undefined;
             if (existing && existing.id !== d.restaurantId) {
@@ -242,7 +276,8 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
             }
             update({ restaurantAddress: p.address, restaurantLocation: p.location, addressEdited: true,
               ...(!d.restaurantId && p.name ? { newRestaurant: true, restaurantName: p.name } : {}) });
-          }} />
+          }} />}
+        {mealId && <p className="muted small">这次记录属于这家店；店铺地址可在店铺详情中单独修改。</p>}
         {d.restaurantId && d.addressEdited && <p className="muted small">保存这一顿时同时更新店铺位置，已有历史记录保留。</p>}
         {d.newRestaurant && <TagInput label="店铺标签" value={d.restaurantTags} onChange={restaurantTags => update({ restaurantTags })} groups={groups.data ?? []} />}
       </section>
@@ -278,8 +313,9 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
             : <Notice tone="info">尚未记录这家店的菜品</Notice>}
           <div className="dish-rating-list">
             {dishList.filter(x => x.variant || !referenceNames.has(x.name)).map(x => renderDish(x.variant ? `${x.name}（${x.variant}）` : x.name, x.id))}
+            {historicalDishes.filter(x => x.variant || !referenceNames.has(x.name)).map(x => renderDish(`${x.name}${x.variant ? `（${x.variant}）` : ''}（已归档）`, x.id))}
             {d.newDishes.filter(name => !referenceNames.has(name)).map(name => renderDish(name, `new:${name}`, d.dishOrigins[name], `移除新菜 ${name}`))}
-            {d.dishes.filter(id => !dishList.some(x => x.id === id)).map(id => renderDish('已选菜品（资料暂不可用）', id, undefined, `移除暂不可用菜品 ${id}`))}
+            {d.dishes.filter(id => !loadedDishes.some(x => x.id === id)).map(id => renderDish('已选菜品（资料暂不可用）', id, undefined, `移除暂不可用菜品 ${id}`))}
           </div>
           <div className="inline-add">
             <input aria-label="新菜名" placeholder="没有的菜直接输入" value={dishText} maxLength={120} onChange={e => setDishText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addDish(); } }} />
@@ -288,7 +324,7 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
           <DishReferences groups={referenceGroups} error={references.error} loading={references.loading || references.data?.name !== referenceName}
             disabled={busy || dishesPending} onRetry={references.reload}
             renderDish={(name, origin) => {
-              const existing = dishList.find(x => x.name === name && !x.variant);
+              const existing = dishList.find(x => x.name === name && !x.variant) ?? historicalDishes.find(x => x.name === name && !x.variant);
               return renderDish(name, existing?.id ?? `new:${name}`, origin, `选择参考菜品 ${name}`);
             }} />
         </section>
@@ -329,7 +365,7 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
       </fieldset>
       <div className="save-bar">
         {error && <Notice tone="error">{error}</Notice>}
-        <Button className="btn-block" onClick={() => void save()} disabled={busy}>{busy ? '保存中…' : '保存这一顿'}</Button>
+        <Button className="btn-block" onClick={() => void save()} disabled={busy || (mealId ? dishesPending : false)}>{busy ? '保存中…' : mealId ? '保存修改' : '保存这一顿'}</Button>
       </div>
     </>
   );
