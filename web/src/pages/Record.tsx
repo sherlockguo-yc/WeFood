@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Plus } from 'lucide-react';
 import { ApiError, api, message, newKey, type Dish, type Meal, type Person, type Restaurant, type TagGroup, type UserInfo, type FoodLocation } from '../api.js';
 import { PlacePicker } from '../components/PlacePicker.js';
 import { DishReferences } from '../components/DishReferences.js';
-import { normalizeDishName, type DishOrigin, type DishCandidateResult, type SourcePlace } from '../../../shared/dishReferences.js';
+import { aggregateDishCandidates, normalizeDishName, type DishOrigin, type DishCandidateResult, type DishReference, type SourcePlace } from '../../../shared/dishReferences.js';
+import { MenuOcr } from '../components/MenuOcr.js';
 import { DishRatingRow, type DishRating } from '../components/DishRatingRow.js';
 import { navigate } from '../router.js';
 import { Button, Chip, FeelingPicker, Field, Group, Notice, PageHead, PhotoInput, PhotoStrip, TagInput, useLoad } from '../components/Ui.js';
@@ -16,7 +17,8 @@ type Draft = {
   dishOrigins: Record<string, DishOrigin>;
   ratings: Record<string, Rating>; amount: string; note: string; photos: string[];
   mealVersion?: number;
-  source?: { target: string; url: string; confirm?: SourcePlace };
+  source?: { target: string; url: string; confirm?: SourcePlace; confirmations?: SourcePlace[] };
+  menu?: { target: string; groups: DishReference[] };
 };
 const SHOP = 'shop';
 const storageKey = (uid: string, mealId = '') => mealId ? `wefood:edit-draft:${uid}:${mealId}` : `wefood:draft:${uid}`;
@@ -120,7 +122,7 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
   const referenceName = d.newRestaurant ? d.restaurantName.trim() : selected?.name.trim() ?? '';
   const referenceTarget = JSON.stringify([d.restaurantId, referenceName, address]);
   const source = d.source?.target === referenceTarget ? d.source : undefined;
-  const referenceInput = { restaurantId: d.addressEdited ? '' : d.restaurantId, name: referenceName, address, sourceUrl: source?.url ?? '', ...(source?.confirm ? { confirm: source.confirm } : {}) };
+  const referenceInput = { restaurantId: d.addressEdited ? '' : d.restaurantId, name: referenceName, address, ...(foodLocation ? { location: { lat: foodLocation.lat, lng: foodLocation.lng } } : {}), sourceUrl: source?.url ?? '', ...(source?.confirmations?.length ? { confirmations: source.confirmations } : {}), ...(source?.confirm ? { confirm: source.confirm } : {}) };
   const referenceKey = JSON.stringify(referenceInput);
   const currentReference = useRef(referenceKey); currentReference.current = referenceKey;
   const [fetchedReferences, setFetchedReferences] = useState<{ key: string; data?: DishCandidateResult; error?: string } | null>(null);
@@ -128,34 +130,41 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
   const references = useLoad(async () => ({ key: referenceKey, data: await api<DishCandidateResult>('/dish-candidates', { method: 'POST', json: referenceInput }) }), [referenceKey]);
   const referenceData = fetchedReferences?.key === referenceKey && fetchedReferences.data ? fetchedReferences.data
     : references.data?.key === referenceKey ? references.data.data : undefined;
-  const referenceCandidates = referenceData?.candidates ?? [];
+  const menuGroups = d.menu?.target === referenceTarget ? d.menu.groups : [];
+  const referenceCandidates = useMemo(() => aggregateDishCandidates([
+    ...(referenceData?.candidates ?? []).flatMap(c => c.origins.map(origin => ({ id: origin.url ?? origin.photoId!, brand: referenceName, origin, names: [c.name] }))),
+    ...(d.menu?.target === referenceTarget ? d.menu.groups : [])
+  ]), [referenceData, d.menu, referenceTarget, referenceName]);
+  const displayedReferences = referenceData ? { ...referenceData, candidates: referenceCandidates } : { name: referenceName, restaurantId: d.restaurantId, sourceUrl: '', sources: [], candidates: referenceCandidates };
   const referenceNames = new Set(referenceCandidates.map(candidate => normalizeDishName(candidate.name)));
   const referenceBusy = fetchingReference === referenceTarget;
   const referenceError = fetchedReferences?.key === referenceKey ? fetchedReferences.error : references.error;
   useEffect(() => {
-    if (busy || !referenceData) return;
+    if (busy || !referenceCandidates.length) return;
     setD(s => {
       const origins = { ...s.dishOrigins }; let changed = false;
       for (const name of s.newDishes) {
-        const candidate = referenceData.candidates.find(c => normalizeDishName(c.name) === normalizeDishName(name));
+        const candidate = referenceCandidates.find(c => normalizeDishName(c.name) === normalizeDishName(name));
         if (!candidate) continue;
         const old = origins[name], evidence = [...(old?.evidence ?? (old ? [old] : []))];
-        for (const origin of candidate.origins) if (!evidence.some(o => o.url === origin.url)) evidence.push(origin);
+        for (const origin of candidate.origins) if (!evidence.some(o => o.url === origin.url && o.photoId === origin.photoId)) evidence.push(origin);
         const next = { ...(old ?? candidate.origins[0]), evidence: evidence.slice(0, 12) };
         if (JSON.stringify(old) !== JSON.stringify(next)) { origins[name] = next; changed = true; }
       }
       return changed ? { ...s, dishOrigins: origins } : s;
     });
-  }, [referenceData, busy]);
-  async function fetchReferences(url: string, confirm?: SourcePlace) {
+  }, [referenceCandidates, busy]);
+  async function fetchReferences(url: string, confirm?: SourcePlace, discover = false) {
     if (referenceBusy || busy) return;
-    const nextInput = { restaurantId: d.addressEdited ? '' : d.restaurantId, name: referenceName, address, sourceUrl: url, ...(confirm ? { confirm } : {}) };
+    const externalSource = confirm && !confirm.url.startsWith('https://you.ctrip.com/');
+    const confirmations = [...(source?.confirmations ?? []), ...(confirm && discover && !source?.confirmations?.some(p => p.url === confirm.url) ? [confirm] : [])].slice(0, 12);
+    const nextInput = { restaurantId: d.addressEdited ? '' : d.restaurantId, name: referenceName, address, ...(foodLocation ? { location: { lat: foodLocation.lat, lng: foodLocation.lng } } : {}), sourceUrl: externalSource ? '' : url, ...(confirmations.length ? { confirmations } : {}), ...(confirm ? { confirm } : {}) };
     const nextKey = JSON.stringify(nextInput);
-    update({ source: { target: referenceTarget, url, confirm } });
+    update({ source: { target: referenceTarget, url: nextInput.sourceUrl, confirm, confirmations } });
     currentReference.current = nextKey; setFetchingReference(referenceTarget);
     setFetchedReferences({ key: nextKey, data: referenceData });
     try {
-      const data = await api<DishCandidateResult>('/dish-candidates', { method: 'POST', json: { ...nextInput, load: true } });
+      const data = await api<DishCandidateResult>('/dish-candidates', { method: 'POST', json: { ...nextInput, load: !discover, discover } });
       if (currentReference.current === nextKey) setFetchedReferences({ key: nextKey, data });
     } catch (error) {
       if (currentReference.current === nextKey) setFetchedReferences({ key: nextKey, data: referenceData, error: message(error) });
@@ -240,6 +249,9 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
       const matchedSource = referenceData?.sources.find(s => s.channel === 'ctrip' && (s.status === 'ready' || s.status === 'stale'))?.origin;
       if (cur.source?.target === referenceTarget && matchedSource?.restaurantName && matchedSource.address) {
         await api('/dish-candidates', { method: 'POST', json: { restaurantId: rid, sourceUrl: matchedSource.url, bind: true, confirm: { name: matchedSource.restaurantName, address: matchedSource.address, url: matchedSource.url } } });
+      }
+      if (cur.source?.target === referenceTarget && cur.source.confirmations?.length) {
+        await api('/dish-candidates', { method: 'POST', json: { restaurantId: rid, confirmations: cur.source.confirmations, bind: true } });
       }
       for (const n of [...cur.newDishes]) {
         const x = await api<Dish>('/dishes', { method: 'POST', key: `${cur.key}-d-${shortHash(n)}`, json: { name: n, restaurantId: rid, origin: cur.dishOrigins[n] ?? null } });
@@ -371,8 +383,9 @@ export function Record({ user, loc }: { user: UserInfo; loc: string }) {
             <input aria-label="新菜名" placeholder="没有的菜直接输入" value={dishText} maxLength={120} onChange={e => setDishText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addDish(); } }} />
             <Button variant="soft" onClick={addDish} disabled={!dishText.trim() || dishesPending}>添加菜品</Button>
           </div>
-          <DishReferences key={referenceTarget} data={referenceData} error={referenceError} loading={referenceBusy || references.loading}
-            disabled={busy || dishesPending} onRetry={() => { if (source?.url) void fetchReferences(source.url, source.confirm); else { setFetchedReferences(null); references.reload(); } }} onLoad={(url, confirm) => void fetchReferences(url, confirm)}
+          <MenuOcr key={`ocr:${referenceTarget}`} name={referenceName} disabled={busy || dishesPending || referenceBusy} onAdopt={group => update({ menu: { target: referenceTarget, groups: [...menuGroups, group] } })} />
+          <DishReferences key={referenceTarget} data={displayedReferences} error={referenceError} loading={referenceBusy || references.loading}
+            disabled={busy || dishesPending} onRetry={() => { if (source?.url) void fetchReferences(source.url, source.confirm); else { setFetchedReferences(null); references.reload(); } }} onLoad={(url, confirm, discover) => void fetchReferences(url, confirm, discover)}
             renderDish={candidate => {
               const name = candidate.name;
               const existing = dishList.find(x => normalizeDishName(x.name) === normalizeDishName(name) && !x.variant) ?? historicalDishes.find(x => normalizeDishName(x.name) === normalizeDishName(name) && !x.variant);

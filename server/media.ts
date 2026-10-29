@@ -23,7 +23,11 @@ export function referencedPhotos(db: FoodDB, owner?: string) {
     const rows = (owner
       ? db.prepare(`SELECT data FROM ${table} WHERE owner_id=?`).all(owner)
       : db.prepare(`SELECT data FROM ${table}`).all()) as { data: string }[];
-    for (const r of rows) for (const id of (JSON.parse(r.data).photos ?? []) as string[]) ids.add(id);
+    for (const r of rows) {
+      const data = JSON.parse(r.data);
+      for (const id of (data.photos ?? []) as string[]) ids.add(id);
+      for (const origin of [data.origin, ...(data.origin?.evidence ?? [])]) if (origin?.photoId) ids.add(origin.photoId);
+    }
   }
   const shares = (owner
     ? db.prepare('SELECT snapshot FROM shares WHERE owner_id=? AND revoked=0').all(owner)

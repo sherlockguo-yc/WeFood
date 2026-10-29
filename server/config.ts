@@ -1,7 +1,8 @@
 import { resolve } from 'node:path';
 
 import type { MapsConfig } from './maps.js';
-export type AppConfig = { port: number; host: string; dataDir: string; origins: string[]; secureCookie: boolean; setupToken?: string; maps: MapsConfig };
+import type { CandidateOptions } from './dish-candidates.js';
+export type AppConfig = { port: number; host: string; dataDir: string; origins: string[]; secureCookie: boolean; setupToken?: string; maps: MapsConfig; dishCandidates: CandidateOptions };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const port = Number(env.PORT ?? 4318);
@@ -23,5 +24,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     return v;
   };
   const maps: MapsConfig = { jsKey: env.WEFOOD_TENCENT_JS_KEY || '', key: env.WEFOOD_TENCENT_KEY || '', sk: env.WEFOOD_TENCENT_SK || '', dailyLimit: budget('WEFOOD_MAPS_DAILY_LIMIT', 100), userDailyLimit: budget('WEFOOD_MAPS_USER_DAILY_LIMIT', 20) };
-  return { port, host: env.HOST || '127.0.0.1', dataDir: resolve(env.DATA_DIR || 'data'), origins, secureCookie: env.SECURE_COOKIE === 'true', setupToken, maps };
+  const dishCandidates: CandidateOptions = { amapKey: env.WEFOOD_AMAP_KEY || '', dailyLimit: budget('WEFOOD_DISH_DAILY_LIMIT', 100), userDailyLimit: budget('WEFOOD_DISH_USER_DAILY_LIMIT', 20) };
+  return { port, host: env.HOST || '127.0.0.1', dataDir: resolve(env.DATA_DIR || 'data'), origins, secureCookie: env.SECURE_COOKIE === 'true', setupToken, maps, dishCandidates };
 }

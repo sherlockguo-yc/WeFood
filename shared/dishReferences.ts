@@ -4,7 +4,8 @@ const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const originSchema = z.object({
   publisher: z.string().trim().min(1).max(120),
   title: z.string().trim().min(1).max(200),
-  url: z.string().url().max(2000).refine(value => value.startsWith('https://'), '来源链接必须使用 HTTPS'),
+  url: z.string().url().max(2000).refine(value => value.startsWith('https://'), '来源链接必须使用 HTTPS').optional(),
+  photoId: z.string().uuid().optional(),
   publishedAt: day.nullable(),
   checkedAt: day,
   scope: z.enum(['brand', 'branch']),
@@ -13,13 +14,14 @@ const originSchema = z.object({
   address: z.string().max(300).optional(),
   rawName: z.string().max(120).optional()
 });
-export const dishOriginSchema = originSchema.extend({ evidence: z.array(originSchema).max(12).optional() });
+const validOrigin = originSchema.refine(o => !!o.url !== !!o.photoId, '来源必须为公开HTTPS链接或私人菜单附件之一');
+export const dishOriginSchema = originSchema.extend({ evidence: z.array(validOrigin).max(12).optional() }).refine(o => !!o.url !== !!o.photoId, '来源必须为公开HTTPS链接或私人菜单附件之一');
 export type DishOrigin = z.infer<typeof dishOriginSchema>;
 export type DishReference = { id: string; brand: string; origin: DishOrigin; names: string[] };
 export type DishCandidate = { id: string; name: string; origins: DishOrigin[] };
-export type CandidateSource = { channel: 'wechat' | 'ctrip'; status: 'ready' | 'idle' | 'empty' | 'failed' | 'stale' | 'pending'; message: string; count: number; origin?: DishOrigin };
+export type CandidateSource = { channel: 'wechat' | 'ctrip' | 'search' | 'amap' | 'ocr'; status: 'ready' | 'idle' | 'empty' | 'failed' | 'stale' | 'pending'; message: string; count: number; origin?: DishOrigin };
 export type SourcePlace = { name: string; address: string; url: string };
-export type DishCandidateResult = { name: string; restaurantId: string; candidates: DishCandidate[]; sources: CandidateSource[]; sourceUrl: string; pending?: SourcePlace };
+export type DishCandidateResult = { name: string; restaurantId: string; candidates: DishCandidate[]; sources: CandidateSource[]; sourceUrl: string; pending?: SourcePlace; choices?: SourcePlace[] };
 export const normalizeDishName = (name: string) => name.normalize('NFKC').replace(/\s+/g, '').trim();
 export function aggregateDishCandidates(groups: DishReference[]): DishCandidate[] {
   const items = new Map<string, DishCandidate>();
@@ -28,7 +30,7 @@ export function aggregateDishCandidates(groups: DishReference[]): DishCandidate[
       const name = rawName.normalize('NFKC').trim().replace(/\s+/g, ' '), key = normalizeDishName(name);
       if (!key) continue;
       const item = items.get(key) ?? { id: key, name, origins: [] };
-      if (!item.origins.some(o => o.url === group.origin.url)) item.origins.push({ ...group.origin, rawName });
+      if (!item.origins.some(o => o.url === group.origin.url && o.photoId === group.origin.photoId)) item.origins.push({ ...group.origin, rawName });
       items.set(key, item);
     }
   }

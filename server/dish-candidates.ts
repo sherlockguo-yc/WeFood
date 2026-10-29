@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { FoodDB } from './database.js';
 import { createStore } from './library.js';
 import { fail } from './errors.js';
+import { createDiscovery, type DiscoveryOptions } from './dish-discovery.js';
 import { aggregateDishCandidates, getDishReferences, normalizeDishName, type DishReference, type DishCandidateResult, type SourcePlace } from '../shared/dishReferences.js';
 
 export const GANGXIA_SOURCE = 'https://you.ctrip.com/food/ctripyouyoustar26/21660849.html';
@@ -30,7 +31,7 @@ const SAME_DAY = 86400_000;
 const canonicalShop = (name: string) => normalizeDishName(name).replace(/號/g, '号').replace(/漁/g, '渔');
 const exactPlace = (name: string, address: string, group: DishReference) => canonicalShop(name) === canonicalShop(group.brand) && normalizeDishName(address) === normalizeDishName(group.origin.address ?? '') && !!address.trim();
 type CacheRow = { data: string | null; fetched_at: number; retry_at: number; error: string };
-export type CandidateOptions = { fetchImpl?: typeof fetch; now?: () => Date; timeoutMs?: number; dailyLimit?: number; userDailyLimit?: number };
+export type CandidateOptions = DiscoveryOptions & { timeoutMs?: number; dailyLimit?: number; userDailyLimit?: number };
 
 export function createDishCandidates(db: FoodDB, options: CandidateOptions = {}) {
   db.exec('CREATE TABLE IF NOT EXISTS dish_candidate_cache (url TEXT PRIMARY KEY, data TEXT, fetched_at INTEGER NOT NULL, retry_at INTEGER NOT NULL, error TEXT NOT NULL); CREATE TABLE IF NOT EXISTS dish_source_bindings (owner_id TEXT NOT NULL, restaurant_id TEXT NOT NULL, url TEXT NOT NULL, source_name TEXT NOT NULL, source_address TEXT NOT NULL, target TEXT NOT NULL, PRIMARY KEY(owner_id,restaurant_id)); CREATE TABLE IF NOT EXISTS dish_source_usage (day TEXT NOT NULL, owner_id TEXT NOT NULL, count INTEGER NOT NULL, PRIMARY KEY(day,owner_id))');
@@ -78,7 +79,11 @@ export function createDishCandidates(db: FoodDB, options: CandidateOptions = {})
     inFlight.set(url, promise);
     try { return await promise; } finally { inFlight.delete(url); }
   }
-  const inputSchema = z.object({ restaurantId: z.string().max(100).default(''), name: z.string().trim().max(120).default(''), address: z.string().trim().max(300).default(''), sourceUrl: z.string().trim().max(2000).default(''), load: z.boolean().default(false), bind: z.boolean().default(false), confirm: z.object({ name: z.string().max(120), address: z.string().max(300), url: z.string().max(2000) }).optional() }).strict();
+  const discovery = createDiscovery(db, options, consume, async (url, owner) => {
+    const row = await load(ctripSourceUrl(url), owner);
+    return row.data && clock().getTime() - row.fetched_at <= 7 * SAME_DAY ? JSON.parse(row.data) as DishReference : null;
+  });
+  const inputSchema = z.object({ restaurantId: z.string().max(100).default(''), name: z.string().trim().max(120).default(''), address: z.string().trim().max(300).default(''), sourceUrl: z.string().trim().max(2000).default(''), location: z.object({ lat: z.number().min(-90).max(90), lng: z.number().min(-180).max(180) }).optional(), load: z.boolean().default(false), discover: z.boolean().default(false), bind: z.boolean().default(false), confirmations: z.array(z.object({ name: z.string().max(120), address: z.string().max(300), url: z.string().max(2000) })).max(12).default([]), confirm: z.object({ name: z.string().max(120), address: z.string().max(300), url: z.string().max(2000) }).optional() }).strict();
   return {
     async query(raw: unknown, owner: string): Promise<DishCandidateResult> {
       const input = inputSchema.parse(raw);
@@ -90,7 +95,9 @@ export function createDishCandidates(db: FoodDB, options: CandidateOptions = {})
       const binding = restaurant ? db.prepare('SELECT url,source_name,source_address,target FROM dish_source_bindings WHERE owner_id=? AND restaurant_id=?').get(owner, restaurant.id) as { url: string; source_name: string; source_address: string; target: string } | undefined : undefined;
       const known = groups.length && /[（(]岗厦店[）)]/.test(canonicalShop(name)) ? GANGXIA_SOURCE : '';
       const linked = typeof restaurant?.link === 'string' && restaurant.link.startsWith('https://you.ctrip.com/food/') ? restaurant.link : '';
-      const rawUrl = input.sourceUrl || binding?.url || linked || known;
+      const explicitCtrip = input.sourceUrl && /^https:\/\/you\.ctrip\.com\//.test(input.sourceUrl);
+      const rawUrl = (explicitCtrip ? input.sourceUrl : '') || binding?.url || linked || known;
+      if (input.sourceUrl && !explicitCtrip && !input.discover) ctripSourceUrl(input.sourceUrl);
       const result: DishCandidateResult = { name, restaurantId: input.restaurantId, candidates: [], sources, sourceUrl: '' };
       let row: CacheRow | undefined, url = '';
       if (rawUrl) {
@@ -114,6 +121,12 @@ export function createDishCandidates(db: FoodDB, options: CandidateOptions = {})
           }
         } else sources.push({ channel: 'ctrip', status: 'failed', count: 0, message: row.error || '缓存已过期，请重新获取' });
       } else if (!sources.some(s => s.channel === 'ctrip')) sources.push({ channel: 'ctrip', status: 'idle', count: 0, message: url ? '已找到公开页线索，点击获取后核对分店' : '可添加这家店的携程公开餐厅详情链接' });
+      try {
+        const found = await discovery(name, address, owner, input.restaurantId, input.discover, input.confirm, input.confirmations, restaurant?.location ?? input.location);
+        groups.push(...found.groups); sources.push(...found.sources);
+        result.choices = found.choices.filter(p => p.url !== result.pending?.url);
+        if (!result.sourceUrl) result.sourceUrl = found.groups.find(g => g.origin.publisher === '携程旅行')?.origin.url ?? '';
+      } catch { sources.push({ channel: 'search', status: 'failed', message: '自动搜索暂不可用，原候选保留', count: 0 }); }
       result.candidates = aggregateDishCandidates(groups);
       return result;
     }

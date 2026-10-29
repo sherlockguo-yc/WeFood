@@ -66,7 +66,10 @@ export function libraryRouter(db: FoodDB) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   function check(t: Resource, owner: string, d: any, allowLegacyAddress = false) {
     for (const p of d.photos ?? []) s.photo(owner, p);
-    if (t === 'dishes') s.need('restaurants', owner, d.restaurantId);
+    if (t === 'dishes') {
+      s.need('restaurants', owner, d.restaurantId);
+      for (const origin of [d.origin, ...(d.origin?.evidence ?? [])]) if (origin?.photoId) s.photo(owner, origin.photoId);
+    }
     if (t === 'meals') {
       const restaurant = s.need('restaurants', owner, d.restaurantId);
       if (d.mode === 'dine-in' && !allowLegacyAddress && !restaurant.address?.trim()) fail(400, 'ADDRESS_REQUIRED', '堂食请先补充店铺地址，再保存这次记录');
