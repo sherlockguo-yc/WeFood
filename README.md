@@ -71,6 +71,10 @@ npm test           # API 测试（账号隔离、多设备、CSRF、幂等、冲
 npm run test:e2e   # 用本机 Chrome 以手机视口跑完整流程，使用临时数据目录
 ```
 
+## 品牌资源
+
+图形标是 `web/public/logo-mark.svg`（页面展示）和 `web/public/favicon.svg`（小尺寸与各平台图标用）；字标由 `web/src/components/BrandLogo.tsx` 组合渲染。改动 SVG 后运行 `npm run icons` 重生成 favicon、Apple Touch 与 PWA 图标。
+
 ## 备份
 
 `DATA_DIR` 下的 `wefood.sqlite*` 与 `photos/` 是全部数据。备份前先停服务，或用 SQLite 在线备份：

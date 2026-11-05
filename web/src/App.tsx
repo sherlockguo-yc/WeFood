@@ -3,6 +3,7 @@ import { BookOpen, PenLine, UserRound, Utensils } from 'lucide-react';
 import { api, message, onUnauthorized, setCsrf, type UserInfo } from './api.js';
 import { useLocation } from './router.js';
 import { Button, Empty, Link, Notice } from './components/Ui.js';
+import { BrandLogo } from './components/BrandLogo.js';
 import { AuthPage } from './pages/Auth.js';
 import { Discover } from './pages/Discover.js';
 import { Library } from './pages/Library.js';
@@ -63,6 +64,7 @@ function Shell({ user, loc, path, onSignedOut }: { user: UserInfo; loc: string; 
 
   return (
     <div className="app">
+      <header className="site-head"><BrandLogo /></header>
       <main className="main">{page}</main>
       <nav className="tabbar" aria-label="主导航">
         {TABS.map(({ to, label, Icon }) => (

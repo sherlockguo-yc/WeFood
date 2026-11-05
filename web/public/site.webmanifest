@@ -1,0 +1,16 @@
+{
+  "name": "WeFood 私人食记",
+  "short_name": "WeFood",
+  "description": "记住吃过的店和菜、每个人的口味，下次出门快速找到我们都喜欢的选择。",
+  "lang": "zh-CN",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#F6F0E6",
+  "theme_color": "#F6F0E6",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

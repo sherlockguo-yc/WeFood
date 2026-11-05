@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { ExternalLink, MapPin } from 'lucide-react';
 import { api, ApiError, message, type PublicOpinion, type PublicSnapshot } from '../api.js';
 import { Empty, PhotoStrip, feelingText, fmtTime } from '../components/Ui.js';
+import { BrandLogo } from '../components/BrandLogo.js';
 
 const opinionLine = (o: PublicOpinion) => `${o.person ? `${o.person}：` : ''}${feelingText(o.feeling, o.again)}${o.note ? ` — ${o.note}` : ''}`;
 
@@ -46,7 +47,7 @@ export function PublicShare({ token }: { token: string }) {
   const src = (id: string) => `/api/public/shares/${encodeURIComponent(token)}/photos/${encodeURIComponent(id)}`;
   return (
     <div className="public">
-      <p className="brand">WEFOOD · 朋友的私人食记</p>
+      <BrandLogo tagline="朋友的私人食记" className="public-logo" />
       {state.error ? <Empty title={state.error}>需要的话，请联系分享者重新发一个链接。</Empty>
         : !state.data ? <p className="muted">正在打开分享…</p>
         : (<>

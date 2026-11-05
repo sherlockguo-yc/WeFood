@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">WeFood 私人食记</title>
+  <defs>
+    <linearGradient id="clay" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#B4522A"/>
+      <stop offset="1" stop-color="#9C3E19"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="17" fill="url(#clay)"/>
+  <rect x="4.75" y="4.75" width="54.5" height="54.5" rx="12.5" fill="none" stroke="#FFFCF7" stroke-opacity=".5" stroke-width="1.5"/>
+  <g fill="none" stroke="#FFFCF7" stroke-linecap="round" stroke-linejoin="round">
+    <g stroke-width="2.6">
+      <path d="M22 26c-2.4-3 2-5.2 0-8.6"/>
+      <path d="M32 25c-2.8-3.4 2.4-5.8 0-10.4"/>
+      <path d="M42 26c-2.4-3 2-5.2 0-8.6"/>
+    </g>
+    <path d="M14.5 32h35" stroke-width="3.4"/>
+    <path d="M17 32C18 41.8 23.8 47.5 32 47.5C40.2 47.5 46 41.8 47 32" stroke-width="3.4"/>
+  </g>
+</svg>

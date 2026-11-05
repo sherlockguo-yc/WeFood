@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { api, message, setCsrf, type UserInfo } from '../api.js';
 import { Button, Field, Notice } from '../components/Ui.js';
+import { BrandLogo } from '../components/BrandLogo.js';
 
 const deviceName = () => {
   const ua = navigator.userAgent;
@@ -35,7 +36,7 @@ export function AuthPage({ initialized, onDone }: { initialized: boolean; onDone
 
   return (
     <div className="auth">
-      <p className="brand">WEFOOD · 私人食记</p>
+      <BrandLogo size="lg" tagline="私人食记" className="auth-logo" />
       <h1 className="auth-title">{title}</h1>
       <p className="muted">
         {kind === 'setup' ? '创建第一个账号。初始化令牌只显示在启动服务的终端里，防止别人抢先注册。'
