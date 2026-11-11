@@ -37,6 +37,9 @@ jobs:
         with:
           tag_name: ${{ steps.version.outputs.sha }}
           name: ${{ steps.version.outputs.sha }}
+          # WeMonitor / deploy-agent 都从 body 的 "Auto build <sha>" 读版本号，
+          # 缺了这行就会被判成「CI 成功但没发 Release」
+          body: "Auto build ${{ steps.version.outputs.sha }}"
           files: wefood.tar.gz
           prerelease: true
       - name: Upload artifact to R2
